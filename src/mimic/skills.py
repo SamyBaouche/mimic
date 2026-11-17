@@ -34,6 +34,7 @@ class Skill(BaseModel):
     parameters: list[str] = []
     steps: list[SkillStep]
     source_recording: str | None = None
+    start_url: str | None = None
     refined_by: Literal["heuristic", "llm"] = "heuristic"
 
     def render(self, inputs: dict) -> list[dict]:
@@ -101,6 +102,7 @@ def draft_skill(recording: Recording, source: str | None = None) -> Skill:
         parameters=params,
         steps=steps,
         source_recording=source,
+        start_url=recording.start_url,
     )
 
 

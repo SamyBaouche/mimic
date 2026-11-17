@@ -63,6 +63,22 @@ The planner turns typed values into parameters (`Vendor <- {vendor}`), writes a 
 and stores the skill with its embedding in pgvector. If Ollama is unavailable, a deterministic
 draft is kept instead.
 
+## Replay a skill on a batch and measure it
+
+```bash
+uv run python -m mimic.run --skill enter_invoice                 # 50 invoices, original UI
+uv run python -m mimic.run --skill enter_invoice --layout v2     # redesigned UI
+uv run python -m mimic.run --skill enter_invoice --show --limit 5
+```
+A LangGraph loop (locate → act → verify → retry) executes each step with fallback locator
+strategies (selector → label → name → text). Success is graded against the app's own records,
+and every step is logged to `step_logs` for the failure predictor.
+
+| Layout | Task success (50 invoices) | Avg time / task |
+|---|---|---|
+| v1 (original) | 100% | ~0.2 s |
+| v2 (redesign) | 0% — fields recovered by `name`, renamed button not found | ~1.6 s |
+
 ## Sandbox: LedgerLite
 A fake accounts-payable app used as the training and evaluation target.
 - `/?layout=v1` — original UI
