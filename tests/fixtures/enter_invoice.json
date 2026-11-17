@@ -1,0 +1,155 @@
+{
+  "name": "enter_invoice",
+  "start_url": "http://127.0.0.1:44981",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "created_at": "2026-11-17T03:11:52.744407Z",
+  "events": [
+    {
+      "index": 0,
+      "kind": "fill",
+      "element": {
+        "tag": "input",
+        "selector": "#vendor",
+        "id": "vendor",
+        "name": "vendor",
+        "type": null,
+        "label": "Vendor",
+        "text": null,
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 172.4375,
+          "width": 340.0,
+          "height": 35.0
+        }
+      },
+      "value": "Bureau Express",
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3757,
+      "screenshot": "step_000.png"
+    },
+    {
+      "index": 1,
+      "kind": "fill",
+      "element": {
+        "tag": "input",
+        "selector": "#invoice_number",
+        "id": "invoice_number",
+        "name": "invoice_number",
+        "type": null,
+        "label": "Invoice number",
+        "text": null,
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 239.4375,
+          "width": 340.0,
+          "height": 35.0
+        }
+      },
+      "value": "INV-20260001",
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3811,
+      "screenshot": "step_001.png"
+    },
+    {
+      "index": 2,
+      "kind": "fill",
+      "element": {
+        "tag": "input",
+        "selector": "#date",
+        "id": "date",
+        "name": "date",
+        "type": "date",
+        "label": "Invoice date",
+        "text": null,
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 306.4375,
+          "width": 340.0,
+          "height": 37.328125
+        }
+      },
+      "value": "2026-03-14",
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3821,
+      "screenshot": "step_002.png"
+    },
+    {
+      "index": 3,
+      "kind": "fill",
+      "element": {
+        "tag": "input",
+        "selector": "#total",
+        "id": "total",
+        "name": "total",
+        "type": "number",
+        "label": "Total amount",
+        "text": null,
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 375.765625,
+          "width": 340.0,
+          "height": 35.0
+        }
+      },
+      "value": "249.99",
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3905,
+      "screenshot": "step_003.png"
+    },
+    {
+      "index": 4,
+      "kind": "select",
+      "element": {
+        "tag": "select",
+        "selector": "#category",
+        "id": "category",
+        "name": "category",
+        "type": null,
+        "label": "Category",
+        "text": "Office supplies\nSoftware\nTravel\nUtilities",
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 442.765625,
+          "width": 340.0,
+          "height": 35.0
+        }
+      },
+      "value": "Software",
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3924,
+      "screenshot": null
+    },
+    {
+      "index": 5,
+      "kind": "click",
+      "element": {
+        "tag": "button",
+        "selector": "#save-btn",
+        "id": "save-btn",
+        "name": null,
+        "type": "submit",
+        "label": null,
+        "text": "Save invoice",
+        "placeholder": null,
+        "bbox": {
+          "x": 44.0,
+          "y": 493.765625,
+          "width": 107.578125,
+          "height": 35.0
+        }
+      },
+      "value": null,
+      "url": "http://127.0.0.1:44981/",
+      "timestamp_ms": 3969,
+      "screenshot": null
+    }
+  ]
+}

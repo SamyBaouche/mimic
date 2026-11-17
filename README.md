@@ -52,6 +52,17 @@ A browser opens: do the task once, then press Enter in the terminal.
 Each step (field, value, label, position, screenshot) is saved to
 `recordings/enter_invoice/recording.json`.
 
+## Learn a skill from the demonstration
+
+```bash
+ollama pull nomic-embed-text   # once, for skill search
+uv run python -m mimic.learn learn recordings/enter_invoice/recording.json
+uv run python -m mimic.learn search "record supplier bills"
+```
+The planner turns typed values into parameters (`Vendor <- {vendor}`), writes a description,
+and stores the skill with its embedding in pgvector. If Ollama is unavailable, a deterministic
+draft is kept instead.
+
 ## Sandbox: LedgerLite
 A fake accounts-payable app used as the training and evaluation target.
 - `/?layout=v1` — original UI

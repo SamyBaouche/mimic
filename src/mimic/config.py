@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     vision_model: str = "qwen2.5vl:7b"
     planner_model: str = "qwen2.5:7b"
+    embed_model: str = "nomic-embed-text"
     sandbox_url: str = "http://localhost:8001"
     embedding_dim: int = 768
 

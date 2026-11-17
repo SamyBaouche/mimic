@@ -8,6 +8,21 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: mimic
+          POSTGRES_PASSWORD: mimic
+          POSTGRES_DB: mimic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mimic"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://mimic:mimic@localhost:5432/mimic
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
