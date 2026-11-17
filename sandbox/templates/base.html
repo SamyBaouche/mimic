@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LedgerLite</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+    header { background: #1f3a5f; color: #fff; padding: 14px 24px; font-weight: 600; }
+    main { display: flex; gap: 24px; padding: 24px; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px #0002; }
+    form { width: 340px; }
+    label { display: block; font-size: 13px; margin-top: 12px; }
+    input, select { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+    button { margin-top: 16px; padding: 10px 16px; border: 0; border-radius: 6px; cursor: pointer; }
+    .primary { background: #2563eb; color: #fff; }
+    .success { background: #16a34a; color: #fff; }
+    table { border-collapse: collapse; min-width: 480px; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 14px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; }
+  </style>
+</head>
+<body>
+  <header>LedgerLite · Accounts Payable</header>
+  <main>
+    {% block form %}{% endblock %}
+    <section class="card">
+      <h3>Recorded invoices ({{ entries|length }})</h3>
+      <table>
+        <tr><th>Vendor</th><th>Invoice #</th><th>Date</th><th>Total</th><th>Category</th></tr>
+        {% for e in entries %}
+        <tr><td>{{ e.vendor }}</td><td>{{ e.invoice_number }}</td><td>{{ e.date }}</td>
+            <td>{{ "%.2f"|format(e.total) }}</td><td>{{ e.category }}</td></tr>
+        {% endfor %}
+      </table>
+    </section>
+  </main>
+</body>
+</html>

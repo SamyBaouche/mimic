@@ -1,0 +1,21 @@
+# Postgres + pgvector only.
+# Ollama runs natively on macOS (Docker on Mac has no GPU access, native Ollama uses Metal).
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: mimic-db
+    environment:
+      POSTGRES_USER: mimic
+      POSTGRES_PASSWORD: mimic
+      POSTGRES_DB: mimic
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mimic"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

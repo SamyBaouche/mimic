@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block form %}
+<form class="card" method="post" action="/invoices">
+  <h3>New invoice</h3>
+  <input type="hidden" name="layout" value="v1">
+  <label for="vendor">Vendor</label>
+  <input id="vendor" name="vendor" required>
+  <label for="invoice_number">Invoice number</label>
+  <input id="invoice_number" name="invoice_number" required>
+  <label for="date">Invoice date</label>
+  <input id="date" name="date" type="date" required>
+  <label for="total">Total amount</label>
+  <input id="total" name="total" type="number" step="0.01" required>
+  <label for="category">Category</label>
+  <select id="category" name="category">
+    <option>Office supplies</option><option>Software</option>
+    <option>Travel</option><option>Utilities</option>
+  </select>
+  <button id="save-btn" class="primary" type="submit">Save invoice</button>
+</form>
+{% endblock %}

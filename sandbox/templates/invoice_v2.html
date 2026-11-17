@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block form %}
+<form class="card" method="post" action="/invoices">
+  <div class="toolbar">
+    <h3>Add a bill</h3>
+    <button id="btn-submit-bill" class="success" type="submit">Record</button>
+  </div>
+  <input type="hidden" name="layout" value="v2">
+  <label for="f-amount">Amount (CAD)</label>
+  <input id="f-amount" name="total" type="number" step="0.01" required>
+  <label for="f-supplier">Supplier name</label>
+  <input id="f-supplier" name="vendor" required>
+  <label for="f-expense">Expense type</label>
+  <select id="f-expense" name="category">
+    <option>Travel</option><option>Utilities</option>
+    <option>Software</option><option>Office supplies</option>
+  </select>
+  <label for="f-ref">Reference #</label>
+  <input id="f-ref" name="invoice_number" required>
+  <label for="f-date">Billing date</label>
+  <input id="f-date" name="date" type="date" required>
+</form>
+{% endblock %}
