@@ -1,4 +1,9 @@
-.PHONY: install up down db api sandbox invoices test lint
+.PHONY: install up down db api sandbox invoices record test lint
+
+NAME ?= enter_invoice
+
+record:
+	uv run python -m mimic.recorder --name $(NAME) --url http://localhost:8001
 
 install:
 	uv sync

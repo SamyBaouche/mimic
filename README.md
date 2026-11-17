@@ -43,6 +43,15 @@ make api                            # Mimic API on http://localhost:8000/health
 make test
 ```
 
+## Record a demonstration
+
+```bash
+uv run python -m mimic.recorder --name enter_invoice --url http://localhost:8001
+```
+A browser opens: do the task once, then press Enter in the terminal.
+Each step (field, value, label, position, screenshot) is saved to
+`recordings/enter_invoice/recording.json`.
+
 ## Sandbox: LedgerLite
 A fake accounts-payable app used as the training and evaluation target.
 - `/?layout=v1` — original UI
