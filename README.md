@@ -74,6 +74,22 @@ A LangGraph loop (locate → act → verify → retry) executes each step with f
 strategies (selector → label → name → text). Success is graded against the app's own records,
 and every step is logged to `step_logs` for the failure predictor.
 
+## You stay in control
+
+Mimic is safe by default: before each task it shows its plan and waits for you.
+
+```
+Task 3/50  — Bureau Express
+  Vendor             <- Bureau Express
+  Total amount       <- 249.99
+  Category           <- Software
+  then click   'Save invoice'
+[A]pprove  [E]dit  [S]kip  [T] approve all  [Q]uit >
+```
+
+- `--confirm-submit --show`: fills the form, then asks again before pressing submit
+- `--yes`: no review (for trusted, already-validated skills)
+
 ## Self-healing
 
 When every recorded locator fails, the healer tries, cheapest first:

@@ -22,6 +22,7 @@ import httpx
 from playwright.sync_api import sync_playwright
 
 from mimic.agent import ReplayAgent, StepResult
+from mimic.approval import ConsoleApprover, build_aliases
 from mimic.config import get_settings
 from mimic.healing import Healer, HealMemory
 from mimic.llm import OllamaClient
@@ -108,6 +109,7 @@ def run_batch(
     client=None,
     out_dir: Path | None = Path("reports"),
     healer: Healer | None = None,
+    approver: ConsoleApprover | None = None,
 ) -> dict:
     settings = get_settings()
     mapping = map_inputs(skill.parameters, list(records[0]), client, settings.planner_model)
@@ -124,13 +126,44 @@ def run_batch(
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         if show:
             page.set_default_timeout(5000)
-        agent = ReplayAgent(page, on_step=logger, healer=healer, skill_name=skill.name)
+        agent = ReplayAgent(
+            page,
+            on_step=logger,
+            healer=healer,
+            skill_name=skill.name,
+            before_submit=approver.confirm_submit if approver else None,
+        )
 
+        if approver is not None:
+            approver.aliases = build_aliases(skill, mapping)
+        expected_records: list[dict] = []  # what each executed task should have recorded
+        skipped = 0
         for i, record in enumerate(records, 1):
+            inputs = apply_mapping(record, mapping)
+            expected = dict(record)
+            if approver is not None:
+                title = str(next(iter(record.values()), ""))
+                decision, actions = approver.review(i, len(records), inputs, skill.render, title)
+                if decision.action == "quit":
+                    print("  Stopped by user.")
+                    break
+                if decision.action == "skip":
+                    skipped += 1
+                    print(f"  Task {i:>3}/{len(records)}  ⏭  skipped by user")
+                    continue
+                for param, value in decision.edits.items():
+                    expected[mapping[param]] = value
+            else:
+                actions = skill.render(inputs)
+
             page.goto(_with_layout(url, layout))
-            actions = skill.render(apply_mapping(record, mapping))
             result = agent.run(actions)
+            if result.skipped:
+                skipped += 1
+                print(f"  Task {i:>3}/{len(records)}  ⏭  submit declined by user")
+                continue
             results.append(result)
+            expected_records.append(expected)
             healed = [s.index for s in result.steps if s.healed]
             mark = "✅" if result.success else f"❌ step {len(result.steps) - 1}: {result.error}"
             if healed:
@@ -141,7 +174,8 @@ def run_batch(
 
     logger.flush()
     entries = {e["invoice_number"]: e for e in httpx.get(f"{base}/api/entries").json()}
-    correct = [_matches(entries.get(r["invoice_number"]), r) for r in records]
+    correct = [_matches(entries.get(r["invoice_number"]), r) for r in expected_records]
+    executed = max(len(expected_records), 1)
 
     steps = [s for r in results for s in r.steps]
     report = {
@@ -149,15 +183,18 @@ def run_batch(
         "skill": skill.name,
         "layout": layout,
         "tasks": len(records),
-        "task_success_rate": round(sum(correct) / len(records), 4),
-        "agent_reported_success_rate": round(sum(r.success for r in results) / len(records), 4),
+        "executed": len(expected_records),
+        "skipped_by_user": skipped,
+        "task_success_rate": round(sum(correct) / executed, 4),
+        "agent_reported_success_rate": round(sum(r.success for r in results) / executed, 4),
         "step_success_rate": round(sum(s.success for s in steps) / max(len(steps), 1), 4),
-        "avg_task_ms": int(sum(r.duration_ms for r in results) / len(results)),
+        "avg_task_ms": int(sum(r.duration_ms for r in results) / max(len(results), 1)),
         "total_s": round(time.monotonic() - t0, 1),
         "retries": sum(s.attempts - 1 for s in steps),
         "strategies": dict(Counter(s.strategy or "failed" for s in steps)),
         "failures": dict(Counter(r.error for r in results if not r.success)),
         "healing": healer.stats.as_dict() if healer else None,
+        "approval": approver.stats if approver else None,
         "mapping": mapping,
         "steps": [asdict(s) for s in steps],
     }
@@ -169,13 +206,18 @@ def run_batch(
 
 def print_report(report: dict) -> None:
     print(f"\n=== {report['skill']} on layout {report['layout']} ===")
-    print(f"Task success      : {report['task_success_rate']:.0%}  ({report['tasks']} tasks)")
+    print(
+        f"Task success      : {report['task_success_rate']:.0%}  "
+        f"({report['executed']} executed, {report['skipped_by_user']} skipped by you)"
+    )
     print(f"Step success      : {report['step_success_rate']:.0%}")
     print(f"Avg time per task : {report['avg_task_ms']} ms   (total {report['total_s']} s)")
     print(f"Retries           : {report['retries']}")
     print(f"Locator strategies: {report['strategies']}")
     if report["healing"]:
         print(f"Self-healing      : {report['healing']}")
+    if report["approval"]:
+        print(f"Your decisions    : {report['approval']}")
     if report["failures"]:
         print(f"Failures          : {report['failures']}")
 
@@ -191,6 +233,10 @@ def main() -> None:
     parser.add_argument("--no-heal", action="store_true", help="Disable self-healing (baseline)")
     parser.add_argument("--no-vision", action="store_true", help="Heal without the VLM")
     parser.add_argument("--debug", action="store_true", help="Print healing decisions")
+    parser.add_argument("--yes", action="store_true", help="Skip plan review (no human check)")
+    parser.add_argument(
+        "--confirm-submit", action="store_true", help="Ask before each submit (use with --show)"
+    )
     args = parser.parse_args()
 
     from mimic.store import SkillStore
@@ -212,7 +258,17 @@ def main() -> None:
             memory=HealMemory(use_db=True),
             debug=args.debug,
         )
-    report = run_batch(skill, records, url, args.layout, args.show, client=client, healer=healer)
+    approver = None if args.yes else ConsoleApprover(confirm_submit=args.confirm_submit)
+    report = run_batch(
+        skill,
+        records,
+        url,
+        args.layout,
+        args.show,
+        client=client,
+        healer=healer,
+        approver=approver,
+    )
     print_report(report)
     print(f"\nReport saved to reports/{report['run_id']}.json")
 

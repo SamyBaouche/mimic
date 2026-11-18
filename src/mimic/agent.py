@@ -48,6 +48,7 @@ class StepResult:
 @dataclass
 class TaskResult:
     success: bool
+    skipped: bool = False  # the user declined the submit
     steps: list[StepResult] = field(default_factory=list)
     duration_ms: int = 0
     error: str | None = None
@@ -63,7 +64,7 @@ class AgentState(TypedDict):
     error: str | None
     step_started: float
     results: list[StepResult]
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "skipped"]
 
 
 def _candidates(page: Page, el: ElementInfo, action: str) -> list[tuple[str, Locator]]:
@@ -82,7 +83,15 @@ def _candidates(page: Page, el: ElementInfo, action: str) -> list[tuple[str, Loc
 class ReplayAgent:
     """Runs one rendered skill (list of concrete actions) on an open page."""
 
-    def __init__(self, page: Page, on_step=None, healer=None, skill_name: str = "skill"):
+    def __init__(
+        self,
+        page: Page,
+        on_step=None,
+        healer=None,
+        skill_name: str = "skill",
+        before_submit=None,  # callable(action) -> bool: human confirmation before submitting
+    ):
+        self.before_submit = before_submit
         self.page = page
         self.healer = healer
         self.skill_name = skill_name
@@ -162,6 +171,8 @@ class ReplayAgent:
             elif action["action"] == "select":
                 self._locator.select_option(str(action["value"]))
             elif action["element"].type == "submit":
+                if self.before_submit is not None and not self.before_submit(action):
+                    return {"error": "declined by user", "status": "skipped"}
                 # A submit in the demo navigated: if nothing happens, it was the wrong button.
                 with self.page.expect_navigation(timeout=NAV_TIMEOUT_MS):
                     self._locator.click()
@@ -173,6 +184,9 @@ class ReplayAgent:
             return {"error": f"{type(exc).__name__}: {exc}".splitlines()[0][:200]}
 
     def verify(self, state: AgentState) -> dict:
+        if state["status"] == "skipped":
+            self._pending_heal = None  # not verified either way: neither remember nor reject
+            return {}
         action = state["actions"][state["idx"]]
         ok = state["locator_strategy"] is not None and state["error"] is None
         if ok and action["action"] in ("fill", "select"):
@@ -226,7 +240,7 @@ class ReplayAgent:
 
     @staticmethod
     def route(state: AgentState) -> str:
-        if state["status"] in ("done", "failed"):
+        if state["status"] in ("done", "failed", "skipped"):
             return END
         return "locate"
 
@@ -262,6 +276,7 @@ class ReplayAgent:
         )
         return TaskResult(
             success=final["status"] == "done",
+            skipped=final["status"] == "skipped",
             steps=final["results"],
             duration_ms=int((time.monotonic() - t0) * 1000),
             error=final["error"],
