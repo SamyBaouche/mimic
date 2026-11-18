@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 
 import httpx
@@ -15,8 +16,13 @@ class OllamaClient:
         self.host = (host or settings.ollama_host).rstrip("/")
         self.timeout = timeout
 
-    def chat_json(self, model: str, system: str, user: str, schema: dict) -> dict:
-        """Ask the model for a JSON answer constrained by a JSON schema."""
+    def chat_json(
+        self, model: str, system: str, user: str, schema: dict, images: list[bytes] | None = None
+    ) -> dict:
+        """Ask the model for a JSON answer constrained by a JSON schema (optionally with images)."""
+        user_msg: dict = {"role": "user", "content": user}
+        if images:
+            user_msg["images"] = [base64.b64encode(img).decode() for img in images]
         r = httpx.post(
             f"{self.host}/api/chat",
             json={
@@ -24,10 +30,7 @@ class OllamaClient:
                 "stream": False,
                 "format": schema,
                 "options": {"temperature": 0},
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                "messages": [{"role": "system", "content": system}, user_msg],
             },
             timeout=self.timeout,
         )

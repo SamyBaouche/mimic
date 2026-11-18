@@ -74,10 +74,21 @@ A LangGraph loop (locate → act → verify → retry) executes each step with f
 strategies (selector → label → name → text). Success is graded against the app's own records,
 and every step is logged to `step_logs` for the failure predictor.
 
-| Layout | Task success (50 invoices) | Avg time / task |
-|---|---|---|
-| v1 (original) | 100% | ~0.2 s |
-| v2 (redesign) | 0% — fields recovered by `name`, renamed button not found | ~1.6 s |
+## Self-healing
+
+When every recorded locator fails, the healer tries, cheapest first:
+1. **memory** — a fix found earlier for this step (pgvector + in-run cache)
+2. **semantic** — compares the demo element with every candidate by meaning (embeddings)
+3. **vision** — Qwen2.5-VL sees the demo screenshot (element boxed in red) and the current
+   screen; *vision proposes, DOM verifies* before acting
+
+A heal is only remembered after the action is verified (a submit must navigate), so a wrong
+guess never poisons the next tasks.
+
+```bash
+uv run python -m mimic.run --skill enter_invoice --layout v2 --no-heal   # baseline
+uv run python -m mimic.run --skill enter_invoice --layout v2             # with healing
+```
 
 ## Sandbox: LedgerLite
 A fake accounts-payable app used as the training and evaluation target.

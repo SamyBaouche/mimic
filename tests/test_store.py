@@ -3,11 +3,10 @@
 import math
 from pathlib import Path
 
-import psycopg
 import pytest
 
 from mimic.config import get_settings
-from mimic.db import connect, init_db
+from mimic.db import connect
 from mimic.models import Recording
 from mimic.skills import draft_skill
 from mimic.store import SkillStore
@@ -27,26 +26,11 @@ def _unit(axis: int, noise_axis: int | None = None) -> list[float]:
 
 
 @pytest.fixture(scope="module")
-def store():
-    """Use a separate 'mimic_test' database so tests never touch your learned skills."""
-    settings = get_settings()
-    original = settings.database_url
-    base, _, _ = original.rpartition("/")
-    try:
-        with psycopg.connect(original, autocommit=True, connect_timeout=3) as conn:
-            exists = conn.execute("SELECT 1 FROM pg_database WHERE datname = 'mimic_test'")
-            if not exists.fetchone():
-                conn.execute("CREATE DATABASE mimic_test")
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"Postgres not available: {exc}")
-
-    settings.database_url = f"{base}/mimic_test"
-    init_db()
+def store(test_database):
     with connect() as conn:
         conn.execute("TRUNCATE skills RESTART IDENTITY CASCADE")
         conn.commit()
-    yield SkillStore()
-    settings.database_url = original
+    return SkillStore()
 
 
 def _skill(name: str):

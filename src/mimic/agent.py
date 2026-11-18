@@ -9,7 +9,7 @@ Locator strategies, from most to least precise. Each one that the recorder captu
     label     <label>Vendor</label>         (survives id changes)
     name      name="vendor"                 (survives relabelling)
     text      button "Save invoice"         (buttons and links)
-Sprint 5 adds a vision strategy for when all of these fail.
+    heal      when all of the above fail: memory → semantic → vision (see healing.py)
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from mimic.models import ElementInfo
 
 MAX_ATTEMPTS = 3
 LOCATE_TIMEOUT_MS = 1500
+GRACE_MS = 150
+NAV_TIMEOUT_MS = 5000
 
 STRATEGY_CONFIDENCE = {"selector": 1.0, "label": 0.8, "name": 0.7, "text": 0.6}
 
@@ -39,6 +41,8 @@ class StepResult:
     latency_ms: int
     success: bool
     error: str | None = None
+    fallbacks: int = 0  # strategies tried before the one that worked
+    healed: bool = False
 
 
 @dataclass
@@ -55,6 +59,7 @@ class AgentState(TypedDict):
     attempt: int
     tried: list[str]
     locator_strategy: str | None
+    confidence: float
     error: str | None
     step_started: float
     results: list[StepResult]
@@ -77,10 +82,13 @@ def _candidates(page: Page, el: ElementInfo, action: str) -> list[tuple[str, Loc
 class ReplayAgent:
     """Runs one rendered skill (list of concrete actions) on an open page."""
 
-    def __init__(self, page: Page, on_step=None):
+    def __init__(self, page: Page, on_step=None, healer=None, skill_name: str = "skill"):
         self.page = page
+        self.healer = healer
+        self.skill_name = skill_name
         self.on_step = on_step  # callback(StepResult) for telemetry / live progress
         self._locator: Locator | None = None
+        self._pending_heal = None
         self.graph = self._build()
 
     # ---------- nodes ----------
@@ -105,20 +113,44 @@ class ReplayAgent:
 
         match = first_match()
         if match is None and candidates:
-            # Nothing yet: the page may still be rendering. Wait once, then check again.
+            # Nothing yet: the page may still be rendering. Wait (long only if it is still
+            # loading, a short grace period otherwise), then check again.
             try:
+                loaded = self.page.evaluate("document.readyState") == "complete"
                 self.page.wait_for_load_state()
-                candidates[0][1].first.wait_for(state="visible", timeout=LOCATE_TIMEOUT_MS)
+                timeout = GRACE_MS if loaded else LOCATE_TIMEOUT_MS
+                candidates[0][1].first.wait_for(state="visible", timeout=timeout)
             except Exception:  # noqa: BLE001
                 pass
             match = first_match()
 
-        if match is None:
-            self._locator = None
-            tried = [*state["tried"], *(n for n, _ in candidates)]
-            return {"locator_strategy": None, "tried": tried, "error": "element not found"}
-        name, self._locator = match
-        return {"locator_strategy": name, "tried": [*state["tried"], name]}
+        if match is not None:
+            name, self._locator = match
+            return {
+                "locator_strategy": name,
+                "confidence": STRATEGY_CONFIDENCE[name],
+                "tried": [*state["tried"], name],
+            }
+
+        tried = [*state["tried"], *(n for n, _ in candidates)]
+        if self.healer is not None and "heal" not in tried:
+            tried.append("heal")
+            healed = self.healer.heal(self.page, action, self.skill_name)
+            self._pending_heal = healed
+            if healed is not None:
+                self._locator = self.page.locator(healed.selector).first
+                return {
+                    "locator_strategy": healed.strategy,
+                    "confidence": healed.confidence,
+                    "tried": tried,
+                }
+        self._locator = None
+        return {
+            "locator_strategy": None,
+            "confidence": 0.0,
+            "tried": tried,
+            "error": "element not found",
+        }
 
     def act(self, state: AgentState) -> dict:
         if state["locator_strategy"] is None:
@@ -129,6 +161,10 @@ class ReplayAgent:
                 self._locator.fill(str(action["value"]))
             elif action["action"] == "select":
                 self._locator.select_option(str(action["value"]))
+            elif action["element"].type == "submit":
+                # A submit in the demo navigated: if nothing happens, it was the wrong button.
+                with self.page.expect_navigation(timeout=NAV_TIMEOUT_MS):
+                    self._locator.click()
             else:
                 self._locator.click()
                 self.page.wait_for_load_state()
@@ -148,17 +184,23 @@ class ReplayAgent:
             except Exception as exc:  # noqa: BLE001
                 ok, state = False, {**state, "error": type(exc).__name__}
 
+        if self._pending_heal is not None:
+            (self.healer.confirm if ok else self.healer.reject)(self._pending_heal)
+            self._pending_heal = None
+
         attempts = state["attempt"] + 1
         if ok or attempts >= MAX_ATTEMPTS or not self._strategies_left(state):
             result = StepResult(
                 index=state["idx"],
                 action=action["action"],
                 strategy=state["locator_strategy"] if ok else None,
-                confidence=STRATEGY_CONFIDENCE.get(state["locator_strategy"] or "", 0.0),
+                confidence=state["confidence"] if ok else 0.0,
                 attempts=attempts,
                 latency_ms=int((time.monotonic() - state["step_started"]) * 1000),
                 success=ok,
                 error=None if ok else state["error"],
+                fallbacks=max(len(state["tried"]) - 1, 0),
+                healed=ok and state["locator_strategy"] in ("memory", "semantic", "vision"),
             )
             if self.on_step:
                 self.on_step(result)
@@ -178,6 +220,8 @@ class ReplayAgent:
     def _strategies_left(self, state: AgentState) -> bool:
         action = state["actions"][state["idx"]]
         names = [n for n, _ in _candidates(self.page, action["element"], action["action"])]
+        if self.healer is not None:
+            names.append("heal")
         return any(n not in state["tried"] for n in names)
 
     @staticmethod
@@ -208,6 +252,7 @@ class ReplayAgent:
                 attempt=0,
                 tried=[],
                 locator_strategy=None,
+                confidence=0.0,
                 error=None,
                 step_started=t0,
                 results=[],

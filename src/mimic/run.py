@@ -23,10 +23,12 @@ from playwright.sync_api import sync_playwright
 
 from mimic.agent import ReplayAgent, StepResult
 from mimic.config import get_settings
+from mimic.healing import Healer, HealMemory
 from mimic.llm import OllamaClient
 from mimic.mapping import apply_mapping, map_inputs
 from mimic.recorder import launch_browser
 from mimic.skills import Skill
+from mimic.vision import VisionLocator
 
 FIELDS = ["vendor", "invoice_number", "date", "total", "category"]
 
@@ -51,7 +53,9 @@ class StepLogger:
         self.enabled = enabled
         self.rows: list[tuple] = []
 
-    def __call__(self, step: StepResult, layout_change: float = 0.0) -> None:
+    def __call__(self, step: StepResult) -> None:
+        # How far the UI drifted from the demo for this step: 0 exact, 0.5 fallback, 1 healed.
+        layout_change = 1.0 if step.healed else (0.5 if step.fallbacks else 0.0)
         self.rows.append(
             (
                 self.run_id,
@@ -103,6 +107,7 @@ def run_batch(
     log_to_db: bool = True,
     client=None,
     out_dir: Path | None = Path("reports"),
+    healer: Healer | None = None,
 ) -> dict:
     settings = get_settings()
     mapping = map_inputs(skill.parameters, list(records[0]), client, settings.planner_model)
@@ -119,14 +124,18 @@ def run_batch(
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         if show:
             page.set_default_timeout(5000)
-        agent = ReplayAgent(page, on_step=logger)
+        agent = ReplayAgent(page, on_step=logger, healer=healer, skill_name=skill.name)
 
         for i, record in enumerate(records, 1):
             page.goto(_with_layout(url, layout))
             actions = skill.render(apply_mapping(record, mapping))
             result = agent.run(actions)
             results.append(result)
+            healed = [s.index for s in result.steps if s.healed]
             mark = "✅" if result.success else f"❌ step {len(result.steps) - 1}: {result.error}"
+            if healed:
+                strategies = ",".join(s.strategy for s in result.steps if s.healed)
+                mark += f"  🩹 healed step {healed} via {strategies}"
             print(f"  Task {i:>3}/{len(records)}  {result.duration_ms:>5} ms  {mark}")
         browser.close()
 
@@ -148,6 +157,7 @@ def run_batch(
         "retries": sum(s.attempts - 1 for s in steps),
         "strategies": dict(Counter(s.strategy or "failed" for s in steps)),
         "failures": dict(Counter(r.error for r in results if not r.success)),
+        "healing": healer.stats.as_dict() if healer else None,
         "mapping": mapping,
         "steps": [asdict(s) for s in steps],
     }
@@ -164,6 +174,8 @@ def print_report(report: dict) -> None:
     print(f"Avg time per task : {report['avg_task_ms']} ms   (total {report['total_s']} s)")
     print(f"Retries           : {report['retries']}")
     print(f"Locator strategies: {report['strategies']}")
+    if report["healing"]:
+        print(f"Self-healing      : {report['healing']}")
     if report["failures"]:
         print(f"Failures          : {report['failures']}")
 
@@ -176,6 +188,9 @@ def main() -> None:
     parser.add_argument("--layout", default="v1", choices=["v1", "v2"])
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--show", action="store_true", help="Show the browser")
+    parser.add_argument("--no-heal", action="store_true", help="Disable self-healing (baseline)")
+    parser.add_argument("--no-vision", action="store_true", help="Heal without the VLM")
+    parser.add_argument("--debug", action="store_true", help="Print healing decisions")
     args = parser.parse_args()
 
     from mimic.store import SkillStore
@@ -187,7 +202,17 @@ def main() -> None:
     url = args.url or skill.start_url or get_settings().sandbox_url
 
     print(f"Running '{skill.name}' on {len(records)} tasks ({args.layout})...")
-    report = run_batch(skill, records, url, args.layout, args.show, client=OllamaClient())
+    settings = get_settings()
+    client = OllamaClient()
+    healer = None
+    if not args.no_heal:
+        healer = Healer(
+            embedder=client.embed,
+            vision=None if args.no_vision else VisionLocator(client, settings.vision_model),
+            memory=HealMemory(use_db=True),
+            debug=args.debug,
+        )
+    report = run_batch(skill, records, url, args.layout, args.show, client=client, healer=healer)
     print_report(report)
     print(f"\nReport saved to reports/{report['run_id']}.json")
 

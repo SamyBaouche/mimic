@@ -3,7 +3,11 @@
 <form class="card" method="post" action="/invoices">
   <div class="toolbar">
     <h3>Add a bill</h3>
-    <button id="btn-submit-bill" class="success" type="submit">Record</button>
+    <div>
+      <button id="btn-export" type="button" onclick="return false">Export CSV</button>
+      <button id="btn-clear" type="reset">Clear</button>
+      <button id="btn-submit-bill" class="success" type="submit">Record</button>
+    </div>
   </div>
   <input type="hidden" name="layout" value="v2">
   <label for="f-amount">Amount (CAD)</label>

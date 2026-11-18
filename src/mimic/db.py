@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS ui_elements (
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
+-- Healing memory: once an element is found again after a UI change, remember where.
+CREATE TABLE IF NOT EXISTS healed_elements (
+    id          SERIAL PRIMARY KEY,
+    skill_name  TEXT NOT NULL,
+    step_index  INT NOT NULL,
+    page_path   TEXT NOT NULL,
+    selector    TEXT NOT NULL,
+    strategy    TEXT NOT NULL,
+    embedding   vector({dim}),
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+
 -- Execution telemetry: training data for the XGBoost failure predictor.
 CREATE TABLE IF NOT EXISTS step_logs (
     id            SERIAL PRIMARY KEY,

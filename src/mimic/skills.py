@@ -12,6 +12,7 @@ Two passes:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
@@ -42,10 +43,20 @@ class Skill(BaseModel):
         missing = [p for p in self.parameters if p not in inputs]
         if missing:
             raise KeyError(f"Missing inputs for skill '{self.name}': {missing}")
+        demo_dir = Path(self.source_recording).parent if self.source_recording else None
         actions = []
         for step in self.steps:
             value = str(inputs[step.parameter]) if step.parameter else step.value
-            actions.append({"action": step.action, "element": step.element, "value": value})
+            shot = str(demo_dir / step.screenshot) if demo_dir and step.screenshot else None
+            actions.append(
+                {
+                    "index": step.index,
+                    "action": step.action,
+                    "element": step.element,
+                    "value": value,
+                    "screenshot": shot,
+                }
+            )
         return actions
 
     def embedding_text(self) -> str:
