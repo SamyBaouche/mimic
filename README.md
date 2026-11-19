@@ -106,11 +106,33 @@ uv run python -m mimic.run --skill enter_invoice --layout v2 --no-heal   # basel
 uv run python -m mimic.run --skill enter_invoice --layout v2             # with healing
 ```
 
+## Failure risk model (XGBoost)
+
+The web is flaky: cookie banners cover buttons, buttons stay disabled while a page loads,
+servers fail. Before every action Mimic probes the element (covered? enabled? on screen?
+how was it found, with what confidence?) and an XGBoost model predicts the probability that
+the action fails. Fixing the page first (dismiss overlays, wait for it to settle) costs time,
+so the agent only pays for it when the predicted risk is high.
+
+```bash
+uv run python -m mimic.riskml collect --runs 6     # chaos runs in the sandbox, telemetry in Postgres
+uv run python -m mimic.riskml train                # XGBoost vs logistic regression vs rules
+uv run python -m mimic.riskml evaluate --tasks 50  # same seeded chaos under 3 policies
+uv run python -m mimic.run --skill enter_invoice --chaos 0.4 --risk-policy predicted
+```
+
+- Train/test split **by run**, so no step of a test run is seen in training
+- Decision threshold chosen on training data with **F2** (a missed failure costs a task;
+  an unnecessary mitigation costs ~0.4 s)
+- Compared against logistic regression and two hand-written rules
+- Evaluation replays **identical seeded perturbations** for every policy (fair A/B test)
+
 ## Sandbox: LedgerLite
 A fake accounts-payable app used as the training and evaluation target.
 - `/?layout=v1` — original UI
 - `/?layout=v2` — redesigned UI (fields reordered, button moved, ids renamed) to test self-healing
 - `/api/entries` — ground truth to score the agent automatically
+- `?chaos=0.4&seed=1` — reproducible flakiness: cookie banner, slow buttons, relabels, HTTP 500
 
 ## Roadmap
 See [docs/PLAN.md](docs/PLAN.md).

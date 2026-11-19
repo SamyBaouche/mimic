@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS step_logs (
     success       BOOLEAN,
     created_at    TIMESTAMPTZ DEFAULT now()
 );
+ALTER TABLE step_logs ADD COLUMN IF NOT EXISTS strategy TEXT;
+ALTER TABLE step_logs ADD COLUMN IF NOT EXISTS features JSONB;
+ALTER TABLE step_logs ADD COLUMN IF NOT EXISTS risk REAL;
+ALTER TABLE step_logs ADD COLUMN IF NOT EXISTS mitigated BOOLEAN;
+ALTER TABLE step_logs ADD COLUMN IF NOT EXISTS error TEXT;
 """
 
 

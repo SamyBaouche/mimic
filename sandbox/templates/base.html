@@ -17,6 +17,11 @@
     table { border-collapse: collapse; min-width: 480px; }
     th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 14px; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; }
+    #cookie-banner { position: fixed; inset: 0; background: rgba(0,0,0,.45);
+                     display: flex; align-items: flex-end; justify-content: center; z-index: 50; }
+    #cookie-banner .dialog { background: #fff; padding: 20px 28px; margin-bottom: 40px;
+                             border-radius: 10px; max-width: 520px; }
+    button:disabled { opacity: .5; cursor: wait; }
   </style>
 </head>
 <body>
@@ -34,5 +39,34 @@
       </table>
     </section>
   </main>
+  {% if chaos %}
+  <script>
+    // Chaos mode: everyday web flakiness (see sandbox/app.py).
+    const C = {{ chaos|tojson }};
+    if (C.relabel) document.querySelectorAll('label').forEach(l => l.textContent += ' *');
+    const submit = document.querySelector('form [type=submit]');
+    if (C.slow_submit_ms && submit) {
+      submit.disabled = true;
+      setTimeout(() => submit.disabled = false, C.slow_submit_ms);
+    }
+    if (C.slow_field) {
+      const f = document.querySelector(`[name="${C.slow_field}"]`);
+      if (f) { f.disabled = true; setTimeout(() => f.disabled = false, C.slow_field_ms); }
+    }
+    if (C.overlay) {
+      const b = document.createElement('div');
+      b.id = 'cookie-banner';
+      b.innerHTML = `<div class="dialog"><b>We value your privacy</b>
+        <p>We use cookies to improve your experience.</p>
+        <button id="cookie-accept" class="primary" type="button">Accept all</button>
+        <button id="cookie-manage" type="button">Manage</button></div>`;
+      document.body.appendChild(b);
+      b.querySelector('#cookie-accept').onclick = () => b.remove();
+      if (C.overlay_escape) {
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') b.remove(); });
+      }
+    }
+  </script>
+  {% endif %}
 </body>
 </html>

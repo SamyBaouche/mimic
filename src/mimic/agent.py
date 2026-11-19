@@ -27,6 +27,7 @@ MAX_ATTEMPTS = 3
 LOCATE_TIMEOUT_MS = 1500
 GRACE_MS = 150
 NAV_TIMEOUT_MS = 5000
+ACT_TIMEOUT_MS = 1000  # fail fast, like a production agent; mitigations wait longer
 
 STRATEGY_CONFIDENCE = {"selector": 1.0, "label": 0.8, "name": 0.7, "text": 0.6}
 
@@ -43,6 +44,9 @@ class StepResult:
     error: str | None = None
     fallbacks: int = 0  # strategies tried before the one that worked
     healed: bool = False
+    features: dict | None = None  # observed right before acting (risk model input)
+    risk: float | None = None  # predicted failure probability
+    mitigations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -90,8 +94,15 @@ class ReplayAgent:
         healer=None,
         skill_name: str = "skill",
         before_submit=None,  # callable(action) -> bool: human confirmation before submitting
+        risk_policy: str = "never",  # never | always | predicted
+        risk_model=None,  # RiskModel, required for the "predicted" policy
     ):
+        if risk_policy == "predicted" and risk_model is None:
+            raise ValueError("risk_policy='predicted' needs a trained risk model")
         self.before_submit = before_submit
+        self.risk_policy = risk_policy
+        self.risk_model = risk_model
+        self._observation: dict = {}
         self.page = page
         self.healer = healer
         self.skill_name = skill_name
@@ -165,23 +176,55 @@ class ReplayAgent:
         if state["locator_strategy"] is None:
             return {}
         action = state["actions"][state["idx"]]
+        self._observe_and_mitigate(state, action)
         try:
             if action["action"] == "fill":
-                self._locator.fill(str(action["value"]))
+                self._locator.fill(str(action["value"]), timeout=ACT_TIMEOUT_MS)
             elif action["action"] == "select":
-                self._locator.select_option(str(action["value"]))
+                self._locator.select_option(str(action["value"]), timeout=ACT_TIMEOUT_MS)
             elif action["element"].type == "submit":
                 if self.before_submit is not None and not self.before_submit(action):
                     return {"error": "declined by user", "status": "skipped"}
                 # A submit in the demo navigated: if nothing happens, it was the wrong button.
-                with self.page.expect_navigation(timeout=NAV_TIMEOUT_MS):
-                    self._locator.click()
+                with self.page.expect_navigation(timeout=NAV_TIMEOUT_MS) as nav:
+                    self._locator.click(timeout=ACT_TIMEOUT_MS)
+                response = nav.value
+                if response is not None and response.status >= 400:
+                    return {"error": f"server error {response.status}"}
             else:
-                self._locator.click()
+                self._locator.click(timeout=ACT_TIMEOUT_MS)
                 self.page.wait_for_load_state()
             return {"error": None}
         except Exception as exc:  # noqa: BLE001
             return {"error": f"{type(exc).__name__}: {exc}".splitlines()[0][:200]}
+
+    def _observe_and_mitigate(self, state: AgentState, action: dict) -> None:
+        """Probe the element, score the risk, and fix the page first if it is worth it."""
+        from mimic.risk import mitigate, probe
+
+        features = probe(
+            self._locator,
+            action,
+            state["locator_strategy"],
+            state["confidence"],
+            max(len(state["tried"]) - 1, 0),
+        )
+        if self._observation:
+            # Retry of the same step: keep what was observed at the first attempt (the decision
+            # point the model learns), just add the new mitigations.
+            first = self._observation
+            features = first["features"]
+        risk = self.risk_model.score(features) if self.risk_model is not None else None
+        should = self.risk_policy == "always" or (
+            self.risk_policy == "predicted"
+            and risk is not None
+            and risk >= self.risk_model.threshold
+        )
+        done = mitigate(self.page, self._locator) if should else []
+        if self._observation:
+            self._observation["mitigations"] += done
+        else:
+            self._observation = {"features": features, "risk": risk, "mitigations": done}
 
     def verify(self, state: AgentState) -> dict:
         if state["status"] == "skipped":
@@ -215,7 +258,11 @@ class ReplayAgent:
                 error=None if ok else state["error"],
                 fallbacks=max(len(state["tried"]) - 1, 0),
                 healed=ok and state["locator_strategy"] in ("memory", "semantic", "vision"),
+                features=self._observation.get("features"),
+                risk=self._observation.get("risk"),
+                mitigations=self._observation.get("mitigations", []),
             )
+            self._observation = {}
             if self.on_step:
                 self.on_step(result)
             last = state["idx"] + 1 >= len(state["actions"])

@@ -3,6 +3,8 @@
 <form class="card" method="post" action="/invoices">
   <h3>New invoice</h3>
   <input type="hidden" name="layout" value="v1">
+  <input type="hidden" name="chaos" value="{{ level }}">
+  <input type="hidden" name="seed" value="{{ seed }}">
   <label for="vendor">Vendor</label>
   <input id="vendor" name="vendor" required>
   <label for="invoice_number">Invoice number</label>

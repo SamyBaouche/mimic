@@ -20,6 +20,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 from playwright.sync_api import sync_playwright
+from psycopg.types.json import Jsonb
 
 from mimic.agent import ReplayAgent, StepResult
 from mimic.approval import ConsoleApprover, build_aliases
@@ -34,11 +35,10 @@ from mimic.vision import VisionLocator
 FIELDS = ["vendor", "invoice_number", "date", "total", "category"]
 
 
-def _with_layout(url: str, layout: str) -> str:
+def _with_layout(url: str, layout: str, **extra) -> str:
     parts = urlsplit(url)
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path or "/", urlencode({"layout": layout}), "")
-    )
+    query = urlencode({"layout": layout, **{k: v for k, v in extra.items() if v is not None}})
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", query, ""))
 
 
 def _base(url: str) -> str:
@@ -47,7 +47,7 @@ def _base(url: str) -> str:
 
 
 class StepLogger:
-    """Writes step telemetry to Postgres (training data for the Sprint 7 failure predictor)."""
+    """Writes step telemetry to Postgres: the training data of the failure risk model."""
 
     def __init__(self, run_id: str, enabled: bool = True):
         self.run_id = run_id
@@ -66,6 +66,11 @@ class StepLogger:
                 layout_change,
                 step.latency_ms,
                 step.success,
+                step.strategy,
+                Jsonb(step.features) if step.features is not None else None,
+                step.risk,
+                bool(step.mitigations),
+                step.error,
             )
         )
 
@@ -78,7 +83,9 @@ class StepLogger:
             with connect() as conn, conn.cursor() as cur:
                 cur.executemany(
                     """INSERT INTO step_logs (run_id, step_index, action, match_score,
-                       layout_change, latency_ms, success) VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                       layout_change, latency_ms, success, strategy, features, risk,
+                       mitigated, error)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     self.rows,
                 )
                 conn.commit()
@@ -110,13 +117,17 @@ def run_batch(
     out_dir: Path | None = Path("reports"),
     healer: Healer | None = None,
     approver: ConsoleApprover | None = None,
+    chaos: float = 0.0,
+    seed_base: int | None = None,
+    risk_policy: str = "never",
+    risk_model=None,
 ) -> dict:
     settings = get_settings()
     mapping = map_inputs(skill.parameters, list(records[0]), client, settings.planner_model)
     base = _base(url)
     httpx.delete(f"{base}/api/entries").raise_for_status()
 
-    run_id = f"{skill.name}-{layout}-{uuid.uuid4().hex[:8]}"
+    run_id = f"{skill.name}-{layout}-{risk_policy}-{uuid.uuid4().hex[:8]}"
     logger = StepLogger(run_id, enabled=log_to_db)
     results = []
     t0 = time.monotonic()
@@ -132,6 +143,8 @@ def run_batch(
             healer=healer,
             skill_name=skill.name,
             before_submit=approver.confirm_submit if approver else None,
+            risk_policy=risk_policy,
+            risk_model=risk_model,
         )
 
         if approver is not None:
@@ -156,7 +169,8 @@ def run_batch(
             else:
                 actions = skill.render(inputs)
 
-            page.goto(_with_layout(url, layout))
+            seed = None if seed_base is None else seed_base + i
+            page.goto(_with_layout(url, layout, chaos=chaos or None, seed=seed))
             result = agent.run(actions)
             if result.skipped:
                 skipped += 1
@@ -194,6 +208,10 @@ def run_batch(
         "strategies": dict(Counter(s.strategy or "failed" for s in steps)),
         "failures": dict(Counter(r.error for r in results if not r.success)),
         "healing": healer.stats.as_dict() if healer else None,
+        "chaos": chaos,
+        "risk_policy": risk_policy,
+        "failed_actions": sum(1 for s in steps if s.features is not None and not s.success),
+        "mitigated_steps": sum(1 for s in steps if s.mitigations),
         "approval": approver.stats if approver else None,
         "mapping": mapping,
         "steps": [asdict(s) for s in steps],
@@ -216,6 +234,12 @@ def print_report(report: dict) -> None:
     print(f"Locator strategies: {report['strategies']}")
     if report["healing"]:
         print(f"Self-healing      : {report['healing']}")
+    if report.get("chaos"):
+        print(
+            f"Chaos {report['chaos']:.0%}, policy {report['risk_policy']}: "
+            f"{report['failed_actions']} failed actions, "
+            f"{report['mitigated_steps']} mitigated steps"
+        )
     if report["approval"]:
         print(f"Your decisions    : {report['approval']}")
     if report["failures"]:
@@ -234,6 +258,9 @@ def main() -> None:
     parser.add_argument("--no-vision", action="store_true", help="Heal without the VLM")
     parser.add_argument("--debug", action="store_true", help="Print healing decisions")
     parser.add_argument("--yes", action="store_true", help="Skip plan review (no human check)")
+    parser.add_argument("--chaos", type=float, default=0.0, help="Sandbox flakiness, 0 to 1")
+    parser.add_argument("--seed", type=int, default=None, help="Reproducible chaos (base seed)")
+    parser.add_argument("--risk-policy", choices=["never", "always", "predicted"], default="never")
     parser.add_argument(
         "--confirm-submit", action="store_true", help="Ask before each submit (use with --show)"
     )
@@ -259,6 +286,11 @@ def main() -> None:
             debug=args.debug,
         )
     approver = None if args.yes else ConsoleApprover(confirm_submit=args.confirm_submit)
+    risk_model = None
+    if args.risk_policy == "predicted":
+        from mimic.risk import RiskModel
+
+        risk_model = RiskModel.load()
     report = run_batch(
         skill,
         records,
@@ -268,6 +300,10 @@ def main() -> None:
         client=client,
         healer=healer,
         approver=approver,
+        chaos=args.chaos,
+        seed_base=args.seed,
+        risk_policy=args.risk_policy,
+        risk_model=risk_model,
     )
     print_report(report)
     print(f"\nReport saved to reports/{report['run_id']}.json")
