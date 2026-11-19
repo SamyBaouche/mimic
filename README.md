@@ -1,65 +1,65 @@
 <div align="center">
 
-# 🪞 Mimic
+# Mimic
 
 ### Show it once. It does it forever.
 
 **A local AI agent that learns a repetitive web task from a single demonstration,<br/>
 repairs itself when the interface changes, and asks you before it acts.**
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](#-quickstart)
-[![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1C3C3C)](#-how-it-works)
-[![Ollama](https://img.shields.io/badge/Models-100%25%20local-000000?logo=ollama&logoColor=white)](#-quickstart)
-[![pgvector](https://img.shields.io/badge/Memory-pgvector-4169E1?logo=postgresql&logoColor=white)](#-how-it-works)
-[![XGBoost](https://img.shields.io/badge/ML-XGBoost-EB6E00)](#-predicting-failures)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](#quickstart)
+[![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1C3C3C)](#how-it-works)
+[![Ollama](https://img.shields.io/badge/Models-100%25%20local-000000?logo=ollama&logoColor=white)](#quickstart)
+[![pgvector](https://img.shields.io/badge/Memory-pgvector-4169E1?logo=postgresql&logoColor=white)](#how-it-works)
+[![XGBoost](https://img.shields.io/badge/ML-XGBoost-EB6E00)](#predicting-failures)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <!-- Record docs/demo.gif and it will appear here -->
 <img src="docs/demo.gif" alt="Mimic demo: replays a task, survives a redesign" width="820"/>
 
-[Results](#-results) · [How it works](#-how-it-works) · [Quickstart](#-quickstart) · [Roadmap](#-roadmap)
+[Results](#results) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Roadmap](#roadmap)
 
 </div>
 
 ---
 
-## ✨ What it does
+## What it does
 
 <table>
 <tr>
-<td width="25%" align="center"><h3>🎥</h3><b>Learns from one demo</b><br/><sub>Do the task once. Mimic records every field, value and click.</sub></td>
-<td width="25%" align="center"><h3>🔁</h3><b>Replays at scale</b><br/><sub>Runs the same task on 50, 500, 5 000 records.</sub></td>
-<td width="25%" align="center"><h3>🩹</h3><b>Heals itself</b><br/><sub>Button renamed or moved? It finds it again and remembers.</sub></td>
-<td width="25%" align="center"><h3>🙋</h3><b>Asks first</b><br/><sub>Shows its plan. Nothing happens without your approval.</sub></td>
+<td width="25%" align="center"><b>Learns from one demo</b><br/><sub>Do the task once. Mimic records every field, value and click.</sub></td>
+<td width="25%" align="center"><b>Replays at scale</b><br/><sub>Runs the same task on 50, 500, 5 000 records.</sub></td>
+<td width="25%" align="center"><b>Heals itself</b><br/><sub>Button renamed or moved? It finds it again and remembers.</sub></td>
+<td width="25%" align="center"><b>Asks first</b><br/><sub>Shows its plan. Nothing happens without your approval.</sub></td>
 </tr>
 </table>
 
-> 🔒 **Everything runs on your machine.** Screens and form data never leave it.
+> **Everything runs on your machine.** Screens and form data never leave it.
 
-## 📊 Results
+## Results
 
 <sub>LedgerLite sandbox · 50 invoices per run · local models on a consumer PC · graded against what the app really recorded</sub>
 
 | | Without Mimic's safeguards | With Mimic |
 |:--|:--:|:--:|
-| ✅ Replay of a learned task | — | **100%** success (50/50) |
-| 🩹 After a UI redesign | **0%** | **100%** |
-| ⚡ Cost of a repair | — | **8.4 s** first time → **0.3 s** from memory |
-| 🌪️ Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
-| ⏱️ Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
+| Replay of a learned task | — | **100%** success (50/50) |
+| After a UI redesign | **0%** | **100%** |
+| Cost of a repair | — | **8.4 s** first time → **0.3 s** from memory |
+| Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
+| ⏱ Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
 
-## 🧠 How it works
+## How it works
 
 ```mermaid
 flowchart LR
-    A([🎥 Your demo]) --> B[Recorder]
+    A([Your demo]) --> B[Recorder]
     B --> C[Planner LLM<br/>values → parameters]
     C --> D[(Skill library<br/>pgvector)]
-    E([📄 Records]) --> F{🙋 You approve}
+    E([Records]) --> F{You approve}
     D --> F
     F --> G[LangGraph agent<br/>locate → act → verify]
-    G -. element lost .-> H[🩹 Self-healing]
-    G -. before acting .-> I[⚠️ Risk model]
+    G -. element lost .-> H[Self-healing]
+    G -. before acting .-> I[Risk model]
 ```
 
 | Step | What happens |
@@ -71,7 +71,7 @@ flowchart LR
 | **5. Heal** | If an element is lost: reuse a past fix → match by meaning → ask a vision model. |
 | **6. Predict** | Before risky actions, an XGBoost model decides if the page needs fixing first. |
 
-### 🩹 Self-healing, step by step
+### Self-healing, step by step
 
 When the redesign renames **Save invoice** to **Record** and moves it next to two decoy buttons:
 
@@ -83,14 +83,14 @@ When the redesign renames **Save invoice** to **Record** and moves it next to tw
 > **Vision proposes, the DOM verifies.** A repair is remembered only after the action worked:
 > a submit must navigate, an error page counts as a failure. A wrong guess never spreads.
 
-### ⚠️ Predicting failures
+### Predicting failures
 
 Real pages are flaky. Before each action Mimic checks the element (covered? disabled? on screen?
 found how, with what confidence?) and an **XGBoost** model predicts the chance of failure.
 Fixing the page costs time, so Mimic only does it when the risk is high: **9% of steps**.
 
 <details>
-<summary><b>🔬 How the model was evaluated (click to expand)</b></summary>
+<summary><b>How the model was evaluated (click to expand)</b></summary>
 <br/>
 
 - **No leakage:** train/test split by run, so steps of one run never appear on both sides.
@@ -112,7 +112,7 @@ Fixing the page costs time, so Mimic only does it when the risk is high: **9% of
 </details>
 
 <details>
-<summary><b>💡 Design decisions (click to expand)</b></summary>
+<summary><b>Design decisions (click to expand)</b></summary>
 <br/>
 
 - **Numbered boxes instead of coordinates.** A 7B vision model was unreliable at pixel
@@ -127,7 +127,7 @@ Fixing the page costs time, so Mimic only does it when the risk is high: **9% of
 
 </details>
 
-## 🚀 Quickstart
+## Quickstart
 
 **You need:** Python 3.11+, [uv](https://docs.astral.sh/uv/), [Ollama](https://ollama.com), Docker Desktop.
 
@@ -161,7 +161,7 @@ uv run python -m mimic.run --skill enter_invoice --layout v2 --debug            
 ```
 
 <details>
-<summary><b>📖 All commands (click to expand)</b></summary>
+<summary><b>All commands (click to expand)</b></summary>
 <br/>
 
 | Command | What it does |
@@ -179,7 +179,7 @@ uv run python -m mimic.run --skill enter_invoice --layout v2 --debug            
 </details>
 
 <details>
-<summary><b>🧪 The sandbox: LedgerLite (click to expand)</b></summary>
+<summary><b>The sandbox: LedgerLite (click to expand)</b></summary>
 <br/>
 
 A small accounts-payable app used to train and grade the agent.
@@ -193,7 +193,7 @@ A small accounts-payable app used to train and grade the agent.
 
 </details>
 
-## 🛠️ Built with
+## Built with
 
 | Layer | Tools |
 |:--|:--|
@@ -203,19 +203,19 @@ A small accounts-payable app used to train and grade the agent.
 | Machine learning | XGBoost · scikit-learn |
 | API & quality | FastAPI · pytest (74 tests) · Ruff · GitHub Actions |
 
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Learn from one demonstration · replay · plan review
 - [x] Self-healing with memory, embeddings and vision
 - [x] XGBoost failure risk model with fair A/B evaluation
-- [ ] 📄 Read inputs from documents (invoice PDF, business card photo)
-- [ ] 📦 `pip install mimic-agent`, a `mimic` CLI, `mimic doctor`
-- [ ] ☑️ Checkboxes, radio buttons, keyboard, uploads, multi-page flows
-- [ ] 🗂️ WorkSuite sandbox: mail, tickets, expenses, approvals
-- [ ] 🎞️ Learn from a screen-recording video
-- [ ] 🧩 Browser extension to record in one click
+- [ ] Read inputs from documents (invoice PDF, business card photo)
+- [ ] `pip install mimic-agent`, a `mimic` CLI, `mimic doctor`
+- [ ] Checkboxes, radio buttons, keyboard, uploads, multi-page flows
+- [ ] WorkSuite sandbox: mail, tickets, expenses, approvals
+- [ ] Learn from a screen-recording video
+- [ ] Browser extension to record in one click
 
-## ⚖️ Limitations
+## Limitations
 
 Mimic works on **web apps** for now, learns from **live demonstrations** (not videos yet), and
 was measured on a sandbox built to be hard in known ways. Real sites will bring new surprises:
