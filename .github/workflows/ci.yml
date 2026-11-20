@@ -6,7 +6,37 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
   test:
+    # SQLite storage, the sandbox, the Django admin, Excel/CSV: everything but Postgres.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest -q -rs
+
+  postgres:
+    # The same storage tests against Postgres + pgvector.
     runs-on: ubuntu-latest
     services:
       db:
@@ -25,9 +55,7 @@ jobs:
       DATABASE_URL: postgresql://mimic:mimic@localhost:5432/mimic
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-      - run: uv sync
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
       - run: uv run playwright install --with-deps chromium
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pytest -q
+      - run: uv run pytest -q -rs tests/test_store.py tests/test_healing.py
