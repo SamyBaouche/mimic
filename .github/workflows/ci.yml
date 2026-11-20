@@ -31,6 +31,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
+      - name: OpenMP for XGBoost (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libomp
       - run: uv sync --locked
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest -q -rs

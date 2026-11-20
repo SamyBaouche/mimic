@@ -269,7 +269,7 @@ uv run pytest
 
 | Extra | Adds |
 |:--|:--|
-| `mimic-agent[ml]` | XGBoost failure-risk model (`mimic risk ...`, `--risk-policy predicted`) |
+| `mimic-agent[ml]` | XGBoost failure-risk model (`mimic risk ...`, `--risk-policy predicted`). On macOS: `brew install libomp` |
 | `mimic-agent[matcher]` | Fine-tuned Hugging Face element matcher (`mimic matcher train`) |
 | `mimic-agent[postgres]` | Postgres + pgvector storage (`DATABASE_URL=postgresql://...`, `docker compose up -d`) |
 | `mimic-agent[all]` | Everything above |
