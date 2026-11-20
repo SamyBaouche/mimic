@@ -42,6 +42,7 @@ const describe = (el) => {
     name: el.getAttribute('name'), type: el.getAttribute('type'), label: labelOf(el),
     text: (el.innerText || '').trim().slice(0, 80) || null,
     placeholder: el.getAttribute('placeholder'),
+    options: el.tagName === 'SELECT' ? [...el.options].map(o => o.value || o.text) : [],
     bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
   };
 };

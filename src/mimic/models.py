@@ -28,6 +28,7 @@ class ElementInfo(BaseModel):
     label: str | None = None
     text: str | None = None
     placeholder: str | None = None
+    options: list[str] = Field(default_factory=list)  # dropdown choices, when known
     bbox: BBox
 
 

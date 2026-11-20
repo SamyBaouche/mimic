@@ -17,12 +17,19 @@ dependencies = [
     "xgboost>=2.0",
     "scikit-learn>=1.4",
     "numpy>=1.26",
+    "reportlab>=4.0",
+    "pypdfium2>=4.0",
 ]
 
 [project.optional-dependencies]
 agent = [
     "playwright>=1.47",
     "langgraph>=0.2",
+]
+
+matcher = [
+    "torch>=2.2",
+    "transformers>=4.40",
 ]
 
 [dependency-groups]

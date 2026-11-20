@@ -45,13 +45,19 @@ def _target(action: dict) -> str:
     return el.label or el.text or el.name or el.selector
 
 
-def format_plan(index: int, total: int, actions: list[dict], title: str = "") -> str:
+def format_plan(
+    index: int, total: int, actions: list[dict], title: str = "", flags: dict | None = None
+) -> str:
+    flags = flags or {}
     lines = [f"\nTask {index}/{total}{'  — ' + title if title else ''}"]
     for a in actions:
         if a["action"] == "click":
             lines.append(f"  then click   '{_target(a)}'")
-        else:
-            lines.append(f"  {_target(a):<18} <- {a['value']}")
+            continue
+        value = "(missing)" if a["value"] in (None, "None") else a["value"]
+        note = flags.get(a.get("parameter"), "")
+        warn = f"   <- check: {note}" if note else ""
+        lines.append(f"  {_target(a):<18} <- {value}{warn}")
     return "\n".join(lines)
 
 
@@ -65,7 +71,7 @@ class ConsoleApprover:
         self.stats = {"approved": 0, "edited": 0, "skipped": 0, "declined_submit": 0}
 
     def review(
-        self, index: int, total: int, inputs: dict, render, title: str = ""
+        self, index: int, total: int, inputs: dict, render, title: str = "", flags=None
     ) -> tuple[Decision, list[dict]]:
         """Show the plan; return the decision and the (possibly edited) actions."""
         edits: dict = {}
@@ -75,7 +81,7 @@ class ConsoleApprover:
             return Decision("approve"), actions
 
         while True:
-            self.print(format_plan(index, total, actions, title))
+            self.print(format_plan(index, total, actions, title, flags))
             answer = self.input("[A]pprove  [E]dit  [S]kip  [T] approve all  [Q]uit > ")
             answer = answer.strip().lower()
             if answer in ("", "a"):

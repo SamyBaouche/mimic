@@ -257,7 +257,8 @@ class ReplayAgent:
                 success=ok,
                 error=None if ok else state["error"],
                 fallbacks=max(len(state["tried"]) - 1, 0),
-                healed=ok and state["locator_strategy"] in ("memory", "semantic", "vision"),
+                healed=ok
+                and state["locator_strategy"] in ("memory", "matcher", "semantic", "vision"),
                 features=self._observation.get("features"),
                 risk=self._observation.get("risk"),
                 mitigations=self._observation.get("mitigations", []),

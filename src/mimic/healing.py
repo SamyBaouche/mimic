@@ -3,6 +3,7 @@
 Called by the agent only when the recorded locators (id, label, name, text) all fail.
 Strategies, cheapest first:
     memory    a fix found earlier for this step on this page (pgvector + in-run cache)
+    matcher   a small Hugging Face cross-encoder fine-tuned on UI redesigns (milliseconds, CPU)
     semantic  compare the recorded element with every candidate on the page by meaning
               (Ollama embeddings) plus structural hints (same input/button type)
     vision    Qwen2.5-VL looks at the demo screenshot and the current screen;
@@ -31,6 +32,7 @@ SEMANTIC_THRESHOLD = 0.80
 SEMANTIC_MARGIN = 0.05
 CONFIDENCE = {"memory": 0.9}
 MAX_FAILURES_PER_STEP = 3  # stop paying for models on a step that keeps failing
+MATCHER_MARGIN = 0.2  # the best candidate must clearly beat the runner-up
 
 
 @dataclass
@@ -146,8 +148,14 @@ class HealMemory:
 
 class Healer:
     def __init__(
-        self, embedder=None, vision=None, memory: HealMemory | None = None, debug: bool = False
+        self,
+        embedder=None,
+        vision=None,
+        memory: HealMemory | None = None,
+        debug: bool = False,
+        matcher=None,  # fine-tuned ElementMatcher (Hugging Face), tried before the VLM
     ):
+        self.matcher = matcher
         self.embedder = embedder  # callable(list[str]) -> list[list[float]]
         self.vision = vision  # VisionLocator
         self.memory = memory or HealMemory(use_db=False)
@@ -224,6 +232,32 @@ class Healer:
             return HealResult("semantic", best.selector, round(best_score, 3), best)
         return None
 
+    def _try_matcher(self, page, target, action) -> HealResult | None:
+        if self.matcher is None:
+            return None
+        candidates = list_candidates(page, action)
+        if not candidates:
+            return None
+        try:
+            scores = self.matcher.scores(
+                describe_text(target, action), [describe_text(c, action) for c in candidates]
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"    ! matcher unavailable ({type(exc).__name__}: {exc})")
+            self.matcher = None
+            return None
+        ranked = sorted(zip(scores, candidates, strict=True), key=lambda x: x[0], reverse=True)
+        best, el = ranked[0]
+        second = ranked[1][0] if len(ranked) > 1 else 0.0
+        self._log(
+            "matcher: " + ", ".join(f"{describe_text(c, action)}={sc:.3f}" for sc, c in ranked[:4])
+        )
+        verifiable = action == "click" and target.type == "submit"
+        needed = self.matcher.threshold if verifiable else max(self.matcher.threshold, 0.7)
+        if best < needed or best - second < MATCHER_MARGIN:
+            return None  # not sure: let the vision model decide
+        return HealResult("matcher", el.selector, round(best, 3), el)
+
     def _try_vision(self, page, target, action, reference) -> HealResult | None:
         if self.vision is None:
             return None
@@ -264,6 +298,7 @@ class Healer:
 
         result = (
             self._try_memory(page, skill, step, path, emb)
+            or self._try_matcher(page, target, kind)
             or self._try_semantic(page, target, kind)
             or self._try_vision(page, target, kind, ref)
         )

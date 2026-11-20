@@ -46,11 +46,16 @@ class Skill(BaseModel):
         demo_dir = Path(self.source_recording).parent if self.source_recording else None
         actions = []
         for step in self.steps:
-            value = str(inputs[step.parameter]) if step.parameter else step.value
+            if step.parameter:
+                raw = inputs[step.parameter]
+                value = None if raw is None else str(raw)
+            else:
+                value = step.value
             shot = str(demo_dir / step.screenshot) if demo_dir and step.screenshot else None
             actions.append(
                 {
                     "index": step.index,
+                    "parameter": step.parameter,
                     "action": step.action,
                     "element": step.element,
                     "value": value,

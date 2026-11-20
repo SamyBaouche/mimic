@@ -61,6 +61,7 @@ CAPTURE_JS = r"""
       label: labelOf(el),
       text: (el.innerText || '').trim().slice(0, 80) || null,
       placeholder: el.getAttribute('placeholder'),
+      options: el.tagName === 'SELECT' ? [...el.options].map(o => o.value || o.text) : [],
       bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
     };
   };
@@ -135,10 +136,22 @@ class Recorder:
         return path
 
 
+# A visible browser that goes behind another window (e.g. while you answer in the terminal)
+# is throttled by the OS: animation frames stop, and Playwright's "is the element stable?"
+# check before a click never completes. These flags keep the page running at full speed.
+NO_THROTTLING = [
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-background-timer-throttling",
+    # Windows: Chrome detects natively when another window covers it and stops rendering.
+    "--disable-features=CalculateNativeWinOcclusion",
+]
+
+
 def launch_browser(p: Playwright, headless: bool) -> Browser:
     """Use Playwright's Chromium, or a local Chrome if MIMIC_CHROME_PATH is set."""
     chrome = os.environ.get("MIMIC_CHROME_PATH")
-    return p.chromium.launch(headless=headless, executable_path=chrome or None)
+    return p.chromium.launch(headless=headless, executable_path=chrome or None, args=NO_THROTTLING)
 
 
 def main() -> None:

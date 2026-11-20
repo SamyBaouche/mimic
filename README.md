@@ -76,8 +76,10 @@ flowchart LR
 When the redesign renames **Save invoice** to **Record** and moves it next to two decoy buttons:
 
 1. **Memory**: was this step already repaired on this page? Reuse the fix instantly.
-2. **Meaning**: compare the old button with every candidate using embeddings.
-3. **Vision**: Qwen2.5-VL sees the demo with the old button **boxed in red**, and the new
+2. **Matcher**: a small Hugging Face cross-encoder (MiniLM, 22M parameters) fine-tuned on
+   synthetic redesigns scores every candidate in milliseconds on a CPU.
+3. **Meaning**: compare the old button with every candidate using embeddings.
+4. **Vision**: only if the matcher is unsure, Qwen2.5-VL sees the demo with the old button **boxed in red**, and the new
    screen with **numbered boxes**. It answers a number, never a guessed coordinate.
 
 > **Vision proposes, the DOM verifies.** A repair is remembered only after the action worked:
@@ -110,6 +112,35 @@ Fixing the page costs time, so Mimic only does it when the risk is high: **9% of
 | Always predict failure | 0.50 | 0.07 | 0.13 |
 
 </details>
+
+### Reading documents
+
+Point Mimic at a folder of invoices (PDF or photos) instead of a spreadsheet. The skill knows
+which values it needs, so Qwen2.5-VL is asked for exactly those, with a confidence per field.
+Values are normalised (`22/02/2026` → `2026-02-22`, `3 389,96 $` → `3389.96`, `software` →
+`Software`), and anything uncertain is flagged in the plan for you to check.
+
+```bash
+uv run python -m sandbox.generate_documents          # 50 invoice PDFs, 3 different layouts
+uv run python -m mimic.extract eval                  # field-level accuracy vs ground truth
+uv run python -m mimic.run --skill enter_invoice --docs sandbox/data/documents --limit 5
+```
+
+### Distilling vision into a small model
+
+The 7B vision model repairs well but needs seconds and a GPU. The **element matcher** is a
+MiniLM cross-encoder fine-tuned on thousands of synthetic redesigns ("Save invoice" vs
+"Submit bill" vs decoys like "Export CSV"), built from banks of real-world synonyms.
+
+- Every label used by the LedgerLite v2 redesign is **held out of training**, so the sandbox
+  test measures generalisation, not memorisation.
+- Compared with string similarity and with the same model before fine-tuning.
+- If its best candidate is not clearly ahead, the vision model still decides.
+
+```bash
+uv sync --extra matcher
+uv run python -m mimic.matcher train     # downloads MiniLM once, fine-tunes, evaluates
+```
 
 <details>
 <summary><b>Design decisions (click to expand)</b></summary>
@@ -175,6 +206,10 @@ uv run python -m mimic.run --skill enter_invoice --layout v2 --debug            
 | `--layout v2` · `--no-heal` · `--debug` | Redesigned UI · baseline · show healing decisions |
 | `--chaos 0.4 --risk-policy predicted` | Flaky pages, fix only the risky steps |
 | `mimic.riskml collect` · `train` · `evaluate` | Telemetry → XGBoost → A/B test |
+| `mimic.matcher train` · `evaluate` | Fine-tune the Hugging Face element matcher |
+| `--no-matcher` | Heal without the fine-tuned matcher |
+| `--docs FOLDER` | Read the inputs from PDFs / photos instead of a data file |
+| `mimic.extract read FILE` · `eval` | Extract one document · measure extraction accuracy |
 
 </details>
 
@@ -199,16 +234,18 @@ A small accounts-payable app used to train and grade the agent.
 |:--|:--|
 | Agent | LangGraph · Playwright |
 | Models (local) | Ollama · Qwen2.5 · Qwen2.5-VL · nomic-embed-text |
+| Fine-tuning | Hugging Face Transformers · PyTorch · MiniLM cross-encoder |
 | Memory & data | PostgreSQL · pgvector |
 | Machine learning | XGBoost · scikit-learn |
-| API & quality | FastAPI · pytest (74 tests) · Ruff · GitHub Actions |
+| API & quality | FastAPI · pytest (107 tests) · Ruff · GitHub Actions |
 
 ## Roadmap
 
 - [x] Learn from one demonstration · replay · plan review
 - [x] Self-healing with memory, embeddings and vision
 - [x] XGBoost failure risk model with fair A/B evaluation
-- [ ] Read inputs from documents (invoice PDF, business card photo)
+- [x] Fine-tuned Hugging Face element matcher (vision only when unsure)
+- [x] Read inputs from documents (PDF, photos) with per-field confidence
 - [ ] `pip install mimic-agent`, a `mimic` CLI, `mimic doctor`
 - [ ] Checkboxes, radio buttons, keyboard, uploads, multi-page flows
 - [ ] WorkSuite sandbox: mail, tickets, expenses, approvals
