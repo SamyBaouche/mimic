@@ -125,20 +125,27 @@ def check_optional() -> list[Check]:
         checks.append(
             Check("Demo app", False, f"not running at {s.sandbox_url}", "mimic sandbox", False)
         )
-    matcher = Path("models/element_matcher")
     try:
         import torch  # noqa: F401
 
         has_torch = True
     except ImportError:
         has_torch = False
-    if matcher.exists() and has_torch:
-        checks.append(Check("UI matcher", True, f"fine-tuned model in {matcher}", required=False))
+    from mimic.matcher import find_model
+
+    local = find_model(download=False)
+    if not has_torch:
+        detail = "PyTorch not installed; healing uses embeddings and vision instead"
+        checks.append(
+            Check("UI matcher", False, detail, 'pip install "mimic-agent[matcher]"', False)
+        )
+    elif local is not None:
+        checks.append(Check("UI matcher", True, f"fine-tuned model in {local}", required=False))
+    elif s.matcher_repo:
+        detail = f"downloaded from huggingface.co/{s.matcher_repo} on first use"
+        checks.append(Check("UI matcher", True, detail, required=False))
     else:
-        missing = "PyTorch not installed" if not has_torch else "no model trained yet"
-        fix = 'pip install "mimic-agent[matcher]"' if not has_torch else "mimic matcher train"
-        detail = f"{missing}; healing uses embeddings and vision instead"
-        checks.append(Check("UI matcher", False, detail, fix, False))
+        checks.append(Check("UI matcher", False, "no model", "mimic matcher train", False))
     return checks
 
 

@@ -512,14 +512,17 @@ def records_from_documents(
 
 def _load_matcher():
     """The fine-tuned element matcher, if it was trained and its extra is installed."""
-    from mimic.matcher import MODEL_DIR
+    try:
+        import torch  # noqa: F401  (the matcher extra)
+    except ImportError:
+        return None
+    from mimic.matcher import ElementMatcher, find_model
 
-    if not MODEL_DIR.exists():
+    path = find_model()
+    if path is None:
         return None
     try:
-        from mimic.matcher import ElementMatcher
-
-        matcher = ElementMatcher.load(MODEL_DIR)
+        matcher = ElementMatcher.load(path)
         print("Element matcher: loaded (fine-tuned, Hugging Face)")
         return matcher
     except Exception as exc:  # noqa: BLE001

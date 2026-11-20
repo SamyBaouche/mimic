@@ -1,0 +1,13 @@
+{% extends "suite_base.html" %}
+{% block content %}
+<form class="card" method="post" action="/mail/{{ m.id }}/reply" style="width:560px">
+  <h3>Reply</h3>
+  <label for="to">To</label>
+  <input id="to" name="to" value="{{ m.sender_address }}">
+  <label for="subject">Subject</label>
+  <input id="subject" name="subject" value="Re: {{ m.subject }}">
+  <label for="message">Message</label>
+  <textarea id="message" name="message"></textarea>
+  <button id="send" class="primary" type="submit">Send</button>
+</form>
+{% endblock %}

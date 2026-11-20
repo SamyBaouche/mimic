@@ -1,5 +1,8 @@
 """LedgerLite: a fake accounting app that Mimic learns to operate.
 
+WorkSuite adds a mailbox (supplier emails with invoice PDFs, replies) and an approvals app,
+so one workflow can go from an email to the ledger to an approval and back to the sender.
+
 Invoices (one page) and expense reports (two pages: form, review, confirmation) exercise
 every action Mimic supports: text, dates, numbers, dropdown, radio, checkbox, file upload,
 Enter in a search box, and a multi-page flow ending on a confirmation message.
@@ -17,12 +20,16 @@ Chaos mode reproduces everyday web flakiness, at random, to train the failure pr
     server_error  the save request fails with HTTP 500 (rarer)
 """
 
+import os
 import random
 import uuid
+from email import policy
+from email.parser import BytesParser
+from email.utils import parseaddr
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI(title="LedgerLite sandbox")
@@ -200,4 +207,153 @@ def list_expenses() -> list[dict]:
 @app.delete("/api/expenses")
 def reset_expenses() -> dict:
     EXPENSES.clear()
+    return {"cleared": True}
+
+
+# ---------------------------------------------------------------- WorkSuite: mailbox
+
+MAIL_DIR = Path(os.environ.get("MIMIC_MAIL_DIR", "sandbox/data/mail"))
+SENT: list[dict] = []
+
+
+def set_mail_dir(path: Path) -> None:
+    global MAIL_DIR
+    MAIL_DIR = Path(path)
+
+
+def read_message(path: Path) -> dict:
+    msg = BytesParser(policy=policy.default).parse(path.open("rb"))
+    name, address = parseaddr(str(msg["From"]))
+    body = msg.get_body(preferencelist=("plain",))
+    return {
+        "id": path.stem,
+        "sender": str(msg["From"]),
+        "sender_name": name or address,
+        "sender_address": address,
+        "to": str(msg["To"]),
+        "subject": str(msg["Subject"]),
+        "date": str(msg["Date"]),
+        "body": body.get_content() if body else "",
+        "attachments": [a.get_filename() for a in msg.iter_attachments()],
+        "_msg": msg,
+    }
+
+
+def _messages() -> list[dict]:
+    return [read_message(p) for p in sorted(MAIL_DIR.glob("*.eml"))]
+
+
+def _message(message_id: str) -> dict | None:
+    path = MAIL_DIR / f"{message_id}.eml"
+    return read_message(path) if path.is_file() and path.parent == MAIL_DIR else None
+
+
+@app.get("/mail", response_class=HTMLResponse)
+def inbox(request: Request):
+    return templates.TemplateResponse(
+        request, "mail_inbox.html", {"messages": _messages(), "app_title": "Mail"}
+    )
+
+
+@app.get("/mail/{message_id}", response_class=HTMLResponse)
+def open_message(request: Request, message_id: str):
+    m = _message(message_id)
+    if m is None:
+        return HTMLResponse("<h1>Not found</h1>", status_code=404)
+    return templates.TemplateResponse(request, "mail_message.html", {"m": m, "app_title": "Mail"})
+
+
+@app.get("/mail/{message_id}/attachments/{name}")
+def attachment(message_id: str, name: str):
+    m = _message(message_id)
+    for part in m["_msg"].iter_attachments() if m else []:
+        if part.get_filename() == name:
+            return Response(part.get_content(), media_type=part.get_content_type())
+    return Response(status_code=404)
+
+
+@app.get("/mail/{message_id}/reply", response_class=HTMLResponse)
+def reply_form(request: Request, message_id: str):
+    m = _message(message_id)
+    if m is None:
+        return HTMLResponse("<h1>Not found</h1>", status_code=404)
+    return templates.TemplateResponse(request, "mail_reply.html", {"m": m, "app_title": "Mail"})
+
+
+@app.post("/mail/{message_id}/reply")
+def send_reply(
+    message_id: str, to: str = Form(...), subject: str = Form(...), message: str = Form("")
+):
+    SENT.append({"in_reply_to": message_id, "to": to, "subject": subject, "message": message})
+    return RedirectResponse(f"/mail/{message_id}/sent", status_code=303)
+
+
+@app.get("/mail/{message_id}/sent", response_class=HTMLResponse)
+def reply_sent(request: Request, message_id: str):
+    sent = next((s for s in reversed(SENT) if s["in_reply_to"] == message_id), None)
+    if sent is None:
+        return HTMLResponse("<h1>Nothing sent</h1>", status_code=404)
+    return templates.TemplateResponse(request, "mail_sent.html", {"s": sent, "app_title": "Mail"})
+
+
+@app.get("/api/mail/sent")
+def list_sent() -> list[dict]:
+    return SENT
+
+
+@app.delete("/api/mail/sent")
+def reset_sent() -> dict:
+    SENT.clear()
+    return {"cleared": True}
+
+
+# ---------------------------------------------------------------- WorkSuite: approvals
+
+APPROVERS = ["Finance manager", "Controller", "CFO"]
+APPROVALS: list[dict] = []
+
+
+@app.get("/approvals/new", response_class=HTMLResponse)
+def approval_form(request: Request):
+    return templates.TemplateResponse(
+        request, "approval_new.html", {"approvers": APPROVERS, "app_title": "Approvals"}
+    )
+
+
+@app.post("/approvals")
+def request_approval(
+    reference: str = Form(...),
+    amount: float = Form(...),
+    approver: str = Form(...),
+    reason: str = Form(""),
+):
+    item = {
+        "id": f"APR-{len(APPROVALS) + 1:04d}",
+        "reference": reference,
+        "amount": amount,
+        "approver": approver,
+        "reason": reason,
+    }
+    APPROVALS.append(item)
+    return RedirectResponse(f"/approvals/{item['id']}", status_code=303)
+
+
+@app.get("/approvals/{approval_id}", response_class=HTMLResponse)
+def approval_done(request: Request, approval_id: str):
+    item = next((a for a in APPROVALS if a["id"] == approval_id), None)
+    if item is None:
+        return HTMLResponse("<h1>Not found</h1>", status_code=404)
+    return templates.TemplateResponse(
+        request, "approval_done.html", {"a": item, "app_title": "Approvals"}
+    )
+
+
+@app.get("/api/approvals")
+def list_approvals() -> list[dict]:
+    return APPROVALS
+
+
+@app.delete("/api/approvals")
+def reset_approvals() -> dict:
+    APPROVALS.clear()
     return {"cleared": True}

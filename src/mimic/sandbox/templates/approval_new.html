@@ -1,0 +1,17 @@
+{% extends "suite_base.html" %}
+{% block content %}
+<form class="card" method="post" action="/approvals" style="width:420px">
+  <h3>Request an approval</h3>
+  <label for="reference">Invoice number</label>
+  <input id="reference" name="reference" required>
+  <label for="amount">Amount</label>
+  <input id="amount" name="amount" type="number" step="0.01" required>
+  <label for="approver">Approver</label>
+  <select id="approver" name="approver">
+    {% for a in approvers %}<option>{{ a }}</option>{% endfor %}
+  </select>
+  <label for="reason">Reason</label>
+  <textarea id="reason" name="reason"></textarea>
+  <button id="request" class="primary" type="submit">Request approval</button>
+</form>
+{% endblock %}

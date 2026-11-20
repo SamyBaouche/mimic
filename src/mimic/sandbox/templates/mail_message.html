@@ -1,0 +1,16 @@
+{% extends "suite_base.html" %}
+{% block content %}
+<section class="card" style="max-width:640px">
+  <h3>{{ m.subject }}</h3>
+  <dl>
+    <dt>From</dt><dd>{{ m.sender }}</dd>
+    <dt>To</dt><dd>{{ m.to }}</dd>
+    <dt>Received</dt><dd>{{ m.date }}</dd>
+  </dl>
+  <pre class="body">{{ m.body }}</pre>
+  {% for a in m.attachments %}
+  <p>Attachment: <a href="/mail/{{ m.id }}/attachments/{{ a }}">{{ a }}</a></p>
+  {% endfor %}
+  <a href="/mail/{{ m.id }}/reply"><button class="primary" type="button">Reply</button></a>
+</section>
+{% endblock %}

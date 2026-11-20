@@ -19,6 +19,10 @@ Teach and run
   mimic run NAME [options]         Repeat the skill on a data file or on documents
   mimic serve                      Live dashboard: watch the agent, approve each plan
 
+Workflows (several skills, several apps)
+  mimic workflow check FILE.yml    Validate it, show the rules its conditions became
+  mimic workflow run FILE.yml      For every email / row: read, decide, run each skill
+
 Skills
   mimic skills                     List learned skills
   mimic skills show NAME           Steps and parameters of a skill
@@ -56,7 +60,8 @@ def cmd_sandbox(rest: list[str]) -> int:
 
     import uvicorn
 
-    from mimic.sandbox import generate_documents, generate_invoices
+    from mimic.sandbox import app as sandbox_app
+    from mimic.sandbox import generate_documents, generate_invoices, generate_mail
 
     parser = argparse.ArgumentParser(prog="mimic sandbox", description="Demo accounting app")
     parser.add_argument("--port", type=int, default=8001)
@@ -72,9 +77,13 @@ def cmd_sandbox(rest: list[str]) -> int:
         generate_invoices.main(args.data / "invoices.json")
     if not (args.data / "documents" / "truth.json").exists():
         generate_documents.main(args.data / "documents")
+    if not (args.data / "mail" / "truth.json").exists():
+        generate_mail.main(args.data / "mail")
+    sandbox_app.set_mail_dir(args.data / "mail")
     print(f"LedgerLite demo app on http://localhost:{args.port}  (Ctrl+C to stop)")
     print(f"  /?layout=v2 for the redesigned interface, demo data in {args.data}")
-    uvicorn.run("mimic.sandbox.app:app", host="127.0.0.1", port=args.port, log_level="warning")
+    print("  WorkSuite: /mail (supplier emails), /approvals/new, /expenses/new")
+    uvicorn.run(sandbox_app.app, host="127.0.0.1", port=args.port, log_level="warning")
     return 0
 
 
@@ -147,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         "extract": ("mimic.extract", lambda r: r),
         "risk": ("mimic.riskml", lambda r: r),
         "matcher": ("mimic.matcher", lambda r: r),
+        "workflow": ("mimic.workflow", lambda r: r),
     }
     if cmd not in handlers:
         print(f"Unknown command '{cmd}'. Run `mimic --help` to see the commands.")

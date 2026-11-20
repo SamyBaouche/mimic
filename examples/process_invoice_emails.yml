@@ -1,0 +1,30 @@
+# Supplier invoices arriving by email: ledger, approval when needed, reply to the supplier.
+# Learn the three skills once (mimic record + mimic learn), then:
+#   mimic workflow check examples/process_invoice_emails.yml
+#   mimic workflow run examples/process_invoice_emails.yml --limit 3
+
+name: process_invoice_emails
+description: From the inbox to the ledger, an approval above 2 500 $, and a reply.
+
+for_each:
+  emails: sandbox/data/mail          # a folder of .eml files, as Outlook / Gmail export them
+
+steps:
+  - read: attachment                 # the PDF attached to each email
+    fields_of: enter_invoice         # read the values this skill needs
+    as: invoice
+
+  - run: enter_invoice               # its inputs are found by name in {invoice}
+
+  - run: request_approval
+    if: the total is over 2 500 $    # plain words; or a rule: invoice.total > 2500
+    with:
+      reference: "{invoice.invoice_number}"
+      amount: "{invoice.total}"
+      reason: "Invoice from {invoice.vendor} is over the 2 500 $ limit"
+      # approver is not given: the value chosen in the demo is used, and shown in the plan
+
+  - run: reply_to_supplier
+    url: /mail/{email.id}/reply      # where this step starts, for this email
+    with:
+      message: "Hello, we received invoice {invoice.invoice_number} ({invoice.total} $). It is being processed."

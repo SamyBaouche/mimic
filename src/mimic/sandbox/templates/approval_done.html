@@ -1,0 +1,7 @@
+{% extends "suite_base.html" %}
+{% block content %}
+<section class="card">
+  <div class="notice" role="status">Approval request {{ a.id }} sent to {{ a.approver }} for {{ a.reference }}.</div>
+  <p><a href="/approvals/new">New request</a></p>
+</section>
+{% endblock %}

@@ -7,12 +7,15 @@
 **A local AI agent that learns a repetitive web task from a single demonstration,<br/>
 repairs itself when the interface changes, and asks you before it acts.**
 
+[![PyPI](https://img.shields.io/pypi/v/mimic-agent?color=3776AB&label=PyPI)](https://pypi.org/project/mimic-agent/)
+[![CI](https://github.com/SamyBaouche/mimic/actions/workflows/ci.yml/badge.svg)](https://github.com/SamyBaouche/mimic/actions/workflows/ci.yml)
+[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Model-element--matcher-FFD21E)](https://huggingface.co/SamyBaouche/mimic-element-matcher)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](#quickstart)
 [![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1C3C3C)](#how-it-works)
 [![Ollama](https://img.shields.io/badge/Models-100%25%20local-000000?logo=ollama&logoColor=white)](#quickstart)
 [![Memory](https://img.shields.io/badge/Memory-SQLite%20%7C%20pgvector-4169E1?logo=postgresql&logoColor=white)](#how-it-works)
 [![XGBoost](https://img.shields.io/badge/ML-XGBoost-EB6E00)](#predicting-failures)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/SamyBaouche/mimic/blob/main/LICENSE)
 
 <!-- Demo GIF goes here once recorded:
 <img src="docs/demo.gif" alt="Mimic demo: replays a task, survives a redesign" width="820"/> -->
@@ -148,6 +151,42 @@ written as `<input value="Save">`, dropdowns whose label differs from their valu
 uv run python scripts/realapp_benchmark.py --rows 30   # starts the admin, records, replays, checks the DB
 ```
 
+### Work that crosses apps: workflows
+
+Real office work rarely stays in one app. A **workflow** chains skills that were each learned
+from one demo in their own app, for every email (or every row of a spreadsheet):
+
+```yaml
+for_each:
+  emails: sandbox/data/mail              # .eml files, as Outlook / Gmail export them
+steps:
+  - read: attachment                     # the invoice PDF, read for what enter_invoice needs
+    fields_of: enter_invoice
+    as: invoice
+  - run: enter_invoice                   # ledger app
+  - run: request_approval                # approvals app
+    if: the total is over 2 500 $        # plain words, shown to you as: invoice.total > 2500
+    with: { reference: "{invoice.invoice_number}", amount: "{invoice.total}" }
+  - run: reply_to_supplier               # mail app
+    url: /mail/{email.id}/reply
+    with: { message: "We received invoice {invoice.invoice_number}." }
+```
+
+- **Conditions in plain words**, translated once by the local LLM into a rule that is checked
+  (known fields only, no code) and shown before anything runs. Or write the rule yourself.
+- **One plan per email** to approve: what was read (uncertain values flagged), which steps run,
+  which are skipped and why, which values come from the demo.
+- **Every step is verified** with the confirmation its own demo ended on; if one fails, that
+  email stops there and the next one starts.
+- The sandbox's WorkSuite (`/mail`, `/approvals/new`, the ledger) runs this end to end in the
+  tests: 6 emails, the rule sends only the large invoices for approval, and each app is checked
+  for what it really received. Document reading is measured separately (96% of fields).
+
+```bash
+mimic workflow check examples/process_invoice_emails.yml
+mimic workflow run examples/process_invoice_emails.yml --limit 3
+```
+
 ### Distilling vision into a small model
 
 The 7B vision model repairs well but needs seconds and a GPU. The **element matcher** is a
@@ -159,9 +198,14 @@ MiniLM cross-encoder fine-tuned on thousands of synthetic redesigns ("Save invoi
 - Compared with string similarity and with the same model before fine-tuning.
 - If its best candidate is not clearly ahead, the vision model still decides.
 
+The trained model is published on the Hugging Face Hub
+([SamyBaouche/mimic-element-matcher](https://huggingface.co/SamyBaouche/mimic-element-matcher),
+with its model card and measured results) and downloaded once on first use. To retrain it:
+
 ```bash
-uv sync --extra matcher
+pip install "mimic-agent[matcher]"
 mimic matcher train     # downloads MiniLM once, fine-tunes, evaluates
+mimic matcher push --repo your-name/mimic-element-matcher   # optional: publish yours
 ```
 
 <details>
@@ -250,10 +294,11 @@ uv run pytest
 | `--layout v2` · `--no-heal` · `--debug` | Redesigned UI · baseline · show healing decisions |
 | `--chaos 0.4 --risk-policy predicted` | Flaky pages, fix only the risky steps |
 | `--docs FOLDER` | Read the inputs from PDFs / photos instead of a data file |
+| `mimic workflow check` · `run FILE.yml` | Chain skills across apps for every email / row, with conditions |
 | `mimic serve [--port 8765]` | Live dashboard: watch the agent, approve from the browser |
 | `mimic read FILE` · `mimic extract eval` | Extract one document · measure extraction accuracy |
 | `mimic risk collect` · `train` · `evaluate` | Telemetry, XGBoost, A/B test |
-| `mimic matcher train` · `evaluate` | Fine-tune the Hugging Face element matcher |
+| `mimic matcher train` · `evaluate` · `push` | Fine-tune, measure, publish the Hugging Face element matcher |
 
 </details>
 
@@ -269,6 +314,7 @@ A small accounts-payable app used to train and grade the agent.
 | `/?layout=v2` | Redesign: fields reordered, button renamed and moved, decoy buttons, new ids |
 | `/?chaos=0.4&seed=1` | Reproducible flakiness: cookie banner, slow buttons, renamed labels, HTTP 500 |
 | `/login` | Sign-in page (user `demo`, password `ledger-demo-2026`) to try secret fields |
+| `/mail` · `/approvals/new` · `/expenses/new` | WorkSuite: supplier emails with PDFs, approvals, 2-page expense reports |
 | `/api/entries` | What was really recorded, used to grade the agent |
 
 </details>
@@ -283,7 +329,7 @@ A small accounts-payable app used to train and grade the agent.
 | Memory & data | SQLite (default) · PostgreSQL + pgvector |
 | Machine learning | XGBoost · scikit-learn |
 | Dashboard & CLI | FastAPI · WebSocket · Chrome DevTools Protocol screencast · `mimic` CLI |
-| Quality | pytest (149 tests) · Ruff · GitHub Actions |
+| Quality | pytest (166 tests on Linux, Windows, macOS) · Ruff · GitHub Actions |
 
 ## Roadmap
 
@@ -297,7 +343,7 @@ A small accounts-payable app used to train and grade the agent.
 - [x] Passwords never recorded: secret fields become run-time parameters
 - [x] Checkboxes, radio buttons, Enter, uploads, multi-page flows; tested on a real Django admin
 - [x] Success learned from the demo's confirmation; Excel / CSV in, results file out
-- [ ] WorkSuite sandbox: mail, tickets, expenses, approvals
+- [x] WorkSuite: mailbox + approvals apps, workflows across apps with plain-words conditions
 - [ ] Learn from a screen-recording video
 - [ ] Browser extension to record in one click
 
@@ -305,18 +351,18 @@ A small accounts-payable app used to train and grade the agent.
 
 - **Web apps only** for now, learned from **live demonstrations** (not videos yet).
 - A skill **repeats one path**. Decisions ("if the amount is over 5 000 $, send for approval")
-  are not learned yet.
+  are written in a workflow, in plain words or as a rule; they are not guessed from demos.
 - A field you **leave at its default** during the demo is not learned: change it once if
   other tasks need another value.
 - **Captchas and two-factor codes** are not bypassed, by design: Mimic stops and asks you.
 - Measured on a sandbox and on a stock Django admin. Every new app will bring new surprises:
-  that is exactly where [contributions](CONTRIBUTING.md) help most.
+  that is exactly where [contributions](https://github.com/SamyBaouche/mimic/blob/main/CONTRIBUTING.md) help most.
 
 ---
 
 <div align="center">
 
-**Found a task Mimic should handle?** [Open an issue](../../issues/new/choose) · [Contribute](CONTRIBUTING.md)
+**Found a task Mimic should handle?** [Open an issue](https://github.com/SamyBaouche/mimic/issues/new/choose) · [Contribute](https://github.com/SamyBaouche/mimic/blob/main/CONTRIBUTING.md)
 
 MIT © 2026 [Samy Baouche](https://www.linkedin.com/in/samybaouche)
 

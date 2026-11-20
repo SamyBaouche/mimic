@@ -1,6 +1,6 @@
 [project]
 name = "mimic-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "A local AI agent that learns a web task from one demonstration, repeats it, and repairs itself when the interface changes."
 readme = "README.md"
 license = "MIT"
@@ -31,6 +31,7 @@ dependencies = [
     "reportlab>=4.0",
     "pypdfium2>=4.0",
     "openpyxl>=3.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -55,7 +56,9 @@ mimic = "mimic.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/SamyBaouche/mimic"
+Changelog = "https://github.com/SamyBaouche/mimic/blob/main/CHANGELOG.md"
 Issues = "https://github.com/SamyBaouche/mimic/issues"
+Model = "https://huggingface.co/SamyBaouche/mimic-element-matcher"
 
 [dependency-groups]
 dev = [

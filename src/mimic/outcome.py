@@ -76,7 +76,8 @@ def _escape_tokens(chunk: str) -> str:
             continue
         if token.isspace():
             pieces.append(r"\s+")
-        elif any(c.isdigit() for c in token):
+        elif any(c.isdigit() for c in token) or "@" in token or "://" in token:
+            # ids, amounts, dates, email addresses, links: they change from task to task
             trail = re.match(r"^(.*?)([.,;:!?)\"'»”]*)$", token)
             pieces.append(r"\S+?" + re.escape(trail.group(2)) if trail.group(2) else r"\S+")
         else:

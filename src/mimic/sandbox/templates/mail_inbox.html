@@ -1,0 +1,12 @@
+{% extends "suite_base.html" %}
+{% block content %}
+<section class="card mail">
+  <h3>Inbox ({{ messages|length }})</h3>
+  <table>
+    <tr><th>From</th><th>Subject</th><th>Received</th></tr>
+    {% for m in messages %}
+    <tr><td>{{ m.sender_name }}</td><td><a href="/mail/{{ m.id }}">{{ m.subject }}</a></td><td>{{ m.date }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

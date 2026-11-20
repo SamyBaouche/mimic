@@ -1,0 +1,44 @@
+# Changelog
+
+All notable changes to Mimic. Versions follow [Semantic Versioning](https://semver.org).
+
+## [Unreleased]
+
+### Added
+- WorkSuite sandbox: a mailbox (supplier emails with invoice PDFs, replies) and an approvals app.
+- Workflows (`mimic workflow check | run`): chain skills across apps for every email or row;
+  read attachments; `if:` conditions in plain words, translated into checked rules; one plan
+  per email; every step verified with its own confirmation.
+- Messages with email addresses or links are recognised as varying in success signals.
+
+## [0.3.0] - 2026-11-20
+
+### Added
+- New actions: checkboxes, radio buttons, Enter in a field, file uploads, multi-page flows.
+- Success signal learned from the end of the demo (final page + confirmation message); runs are
+  graded with it on any site.
+- Excel / CSV input with your own column names; a results file per run; `--only-failed` retries.
+- Steps on pages the app skips (already signed in) are skipped.
+- Real-app test and benchmark on a stock Django admin: 30/30 rows saved correctly.
+- The fine-tuned element matcher is published on the Hugging Face Hub and downloaded on first
+  use; `mimic matcher push` publishes your own, with a model card.
+- CI on Linux, Windows and macOS; releases published to PyPI by GitHub Actions.
+
+### Fixed
+- Labels without `for`, fields named by a `<fieldset>` legend, buttons written as
+  `<input value="Save">`, dropdowns whose label differs from their value.
+
+## [0.2.0] - 2026-11-19
+
+### Added
+- `pip install mimic-agent` and a single `mimic` command, with `mimic doctor`.
+- SQLite storage by default (no Docker); Postgres + pgvector as an option.
+- Passwords and other secret fields are never recorded.
+- Live dashboard (`mimic serve`): streamed agent browser, approve / edit / skip / pause.
+
+## [0.1.0] - 2026-11-17
+
+### Added
+- Learn a web task from one demonstration, replay it on a batch, review each plan.
+- Self-healing with memory, embeddings, a fine-tuned matcher and a vision model.
+- XGBoost failure-risk model; reading inputs from invoice PDFs.

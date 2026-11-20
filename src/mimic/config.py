@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     embed_model: str = "nomic-embed-text"
     sandbox_url: str = "http://localhost:8001"
     embedding_dim: int = 768
+    # Published fine-tuned element matcher (downloaded once if you did not train your own).
+    matcher_repo: str = "SamyBaouche/mimic-element-matcher"
 
 
 @lru_cache

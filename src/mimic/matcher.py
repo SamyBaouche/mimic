@@ -4,9 +4,13 @@ Given the element the user used in the demo and one candidate on the redesigned 
 scores "same purpose?". It replaces most calls to the 7B vision model: milliseconds on a CPU
 instead of seconds on a GPU. Qwen2.5-VL is only asked when the matcher is unsure.
 
-    uv sync --extra matcher
-    uv run python -m mimic.matcher train          # fine-tune + compare with baselines
-    uv run python -m mimic.matcher evaluate       # re-run the evaluation of a saved model
+    pip install "mimic-agent[matcher]"
+    mimic matcher train          # fine-tune + compare with baselines
+    mimic matcher evaluate       # re-run the evaluation of a saved model
+    mimic matcher push           # publish it on the Hugging Face Hub, with a model card
+
+Nobody has to train it: when no local model exists, the published one is downloaded once
+from the Hugging Face Hub (settings: MATCHER_REPO, empty to turn it off).
 """
 
 from __future__ import annotations
@@ -21,7 +25,110 @@ from pathlib import Path
 from mimic.matcher_data import Example, make_examples, sandbox_v2_examples, to_pairs
 
 DEFAULT_BASE = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-MODEL_DIR = Path("models/element_matcher")
+MODEL_DIR = Path("models/element_matcher")  # where `mimic matcher train` writes
+
+
+def find_model(download: bool = True) -> Path | None:
+    """A trained matcher: yours (models/element_matcher), else the one published on the
+    Hugging Face Hub, downloaded once into ~/.mimic/models/element_matcher."""
+    from mimic.config import get_settings
+
+    if (MODEL_DIR / "config.json").exists():
+        return MODEL_DIR
+    settings = get_settings()
+    cached = Path(settings.mimic_home) / "models" / "element_matcher"
+    if (cached / "config.json").exists():
+        return cached
+    if not download or not settings.matcher_repo:
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+
+        print(f"Downloading the element matcher from huggingface.co/{settings.matcher_repo}...")
+        snapshot_download(settings.matcher_repo, local_dir=cached)
+        return cached if (cached / "config.json").exists() else None
+    except Exception as exc:  # noqa: BLE001 - offline, or the extra is not installed
+        print(f"  ! element matcher not downloaded ({type(exc).__name__}); healing still works")
+        return None
+
+
+# ---------------------------------------------------------------- publishing
+
+
+def model_card(meta: dict, repo: str) -> str:
+    """README.md for the Hub: what it does, how it was measured, its limits. Numbers come
+    straight from meta.json, written by the training run."""
+    r = meta["results"]
+    rows = [
+        ("Fine-tuned (this model)", r["fine_tuned"]),
+        ("Same model before fine-tuning", r.get("before_fine_tuning")),
+        ("String similarity", r.get("string_similarity")),
+    ]
+    table = "\n".join(
+        f"| {name} | {v['synthetic_top1']:.1%} | {v['sandbox_v2_top1']:.1%} |"
+        for name, v in rows
+        if v
+    )
+    return f"""---
+license: apache-2.0
+base_model: {meta["base_model"]}
+library_name: transformers
+pipeline_tag: text-classification
+tags: [cross-encoder, ui-automation, web-agents, computer-use, mimic]
+---
+
+# Mimic element matcher
+
+A {meta["parameters"] / 1e6:.0f}M-parameter cross-encoder that answers one question for the
+[Mimic](https://github.com/SamyBaouche/mimic) web agent: *is this element on the redesigned page
+the one the user clicked or filled in the demonstration?* It scores pairs such as
+`button 'Save invoice'` vs `button 'Record'` and lets the agent repair itself in milliseconds
+instead of asking a 7B vision model.
+
+## Results
+
+Top-1 accuracy: the right element must get the highest score among all candidates on the page.
+
+| Model | Synthetic redesigns (held-out test) | LedgerLite v2 redesign |
+|:--|:--:|:--:|
+{table}
+
+- **{r["fine_tuned"]["ms_per_decision_cpu"]} ms per decision on a CPU.**
+- Every label of the LedgerLite v2 redesign is **held out of training**: the second column
+  measures generalisation, not memorisation.
+
+## Training
+
+- Base: `{meta["base_model"]}`, {meta["epochs"]} epochs, {meta["train_pairs"]} pairs from
+  {meta["train_examples"]} synthetic redesigns (synonym banks, reordered fields, decoy buttons).
+- Loss: binary cross-entropy with positive-class weighting. Trained in {meta["train_seconds"]} s.
+- Code: [`matcher.py`](https://github.com/SamyBaouche/mimic/blob/main/src/mimic/matcher.py),
+  [`matcher_data.py`](https://github.com/SamyBaouche/mimic/blob/main/src/mimic/matcher_data.py).
+
+## Use
+
+```python
+from mimic.matcher import ElementMatcher, find_model
+matcher = ElementMatcher.load(find_model())   # downloads {repo} once
+```
+
+## Limits
+
+Trained on synthetic English and French business forms. When its best candidate is not clearly
+ahead, Mimic falls back to the vision model, and every repair is verified on the page before
+it is remembered.
+"""
+
+
+def push(repo: str, private: bool = False) -> str:
+    from huggingface_hub import HfApi
+
+    meta = json.loads((MODEL_DIR / "meta.json").read_text())
+    (MODEL_DIR / "README.md").write_text(model_card(meta, repo), encoding="utf-8")
+    api = HfApi()
+    api.create_repo(repo, private=private, exist_ok=True)
+    api.upload_folder(folder_path=str(MODEL_DIR), repo_id=repo, commit_message="Upload matcher")
+    return f"https://huggingface.co/{repo}"
 
 
 # ---------------------------------------------------------------- inference
@@ -218,7 +325,19 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--epochs", type=int, default=2)
     t.add_argument("--lr", type=float, default=2e-5)
     sub.add_parser("evaluate")
+    p = sub.add_parser("push", help="Publish your trained model on the Hugging Face Hub")
+    p.add_argument("--repo", default=None, help="e.g. your-name/mimic-element-matcher")
+    p.add_argument("--private", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.cmd == "push":
+        from mimic.config import get_settings
+
+        if not (MODEL_DIR / "meta.json").exists():
+            raise SystemExit("No trained model in models/element_matcher: mimic matcher train")
+        repo = args.repo or get_settings().matcher_repo
+        print(f"Published: {push(repo, args.private)}")
+        return
 
     if args.cmd == "train":
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -237,8 +356,11 @@ def main(argv: list[str] | None = None) -> None:
         print_results(meta)
         print(f"\nSaved to {MODEL_DIR}")
     else:
-        matcher = ElementMatcher.load()
-        meta = json.loads((MODEL_DIR / "meta.json").read_text())
+        path = find_model()
+        if path is None:
+            raise SystemExit("No matcher found. Train one (mimic matcher train) or go online.")
+        matcher = ElementMatcher.load(path)
+        meta = json.loads((path / "meta.json").read_text())
         meta["results"] = evaluate(matcher, make_examples(500, seed=2, split="test"), {}) | {
             k: v for k, v in meta["results"].items() if k != "fine_tuned"
         }
