@@ -34,12 +34,20 @@ class ElementInfo(BaseModel):
 
 class RecordedEvent(BaseModel):
     index: int
-    kind: Literal["click", "fill", "select"]
+    kind: Literal["click", "fill", "select", "check", "choose", "upload", "press"]
     element: ElementInfo
     value: str | None = None
+    secret: bool = False  # password-like field: the value is never recorded
     url: str
     timestamp_ms: int
     screenshot: str | None = None
+
+
+class Outcome(BaseModel):
+    """Where the demonstration ended: what success looks like (see skills.SuccessSignal)."""
+
+    url: str
+    texts: list[str] = Field(default_factory=list)  # confirmation-like messages on screen
 
 
 class Recording(BaseModel):
@@ -48,3 +56,4 @@ class Recording(BaseModel):
     viewport: dict = Field(default_factory=lambda: {"width": 1280, "height": 800})
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     events: list[RecordedEvent] = Field(default_factory=list)
+    outcome: Outcome | None = None

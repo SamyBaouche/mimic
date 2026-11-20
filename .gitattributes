@@ -1,0 +1,6 @@
+# Same line endings on Windows, macOS and Linux (no more "LF will be replaced by CRLF").
+* text=auto eol=lf
+*.png binary
+*.pdf binary
+*.safetensors binary
+*.xlsx binary

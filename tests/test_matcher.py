@@ -117,9 +117,9 @@ from mimic.healing import Healer  # noqa: E402
 from mimic.models import Recording  # noqa: E402
 from mimic.recorder import launch_browser  # noqa: E402
 from mimic.run import run_batch  # noqa: E402
+from mimic.sandbox.generate_invoices import generate  # noqa: E402
 from mimic.skills import draft_skill  # noqa: E402
 from mimic.vision import VisionChoice  # noqa: E402
-from sandbox.generate_invoices import generate  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "enter_invoice.json"
 

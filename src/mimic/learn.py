@@ -62,7 +62,7 @@ def search(query: str) -> None:
         print(f"{score:.3f}  {skill.name}: {skill.description}")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Mimic skill library")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_learn = sub.add_parser("learn", help="Learn a skill from a recording.json")
@@ -71,7 +71,7 @@ def main() -> None:
     p_search = sub.add_parser("search", help="Find the skill matching a task description")
     p_search.add_argument("query")
     sub.add_parser("list", help="List learned skills")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cmd == "learn":
         learn(args.recording, use_llm=not args.no_llm)

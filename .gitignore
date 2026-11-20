@@ -8,3 +8,6 @@ sandbox/data/
 recordings/
 mlruns/
 reports/
+models/
+dist/
+*.db

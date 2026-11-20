@@ -1,0 +1,7 @@
+{% extends "expenses_base.html" %}
+{% block content %}
+<section class="card">
+  <div class="notice" role="status">Expense report {{ e.id }} submitted for {{ e.employee }}.</div>
+  <p><a href="/expenses/new">New expense report</a> · <a href="/expenses">All expense reports</a></p>
+</section>
+{% endblock %}

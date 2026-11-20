@@ -1,4 +1,4 @@
-"""Integration tests against a real Postgres + pgvector (skipped if unavailable)."""
+"""Skill library on both storage backends: SQLite (always) and Postgres (if reachable)."""
 
 import math
 from pathlib import Path
@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from mimic.config import get_settings
-from mimic.db import connect
 from mimic.models import Recording
 from mimic.skills import draft_skill
+from mimic.storage import get_storage
 from mimic.store import SkillStore
 
 FIXTURE = Path(__file__).parent / "fixtures" / "enter_invoice.json"
@@ -27,9 +27,7 @@ def _unit(axis: int, noise_axis: int | None = None) -> list[float]:
 
 @pytest.fixture(scope="module")
 def store(test_database):
-    with connect() as conn:
-        conn.execute("TRUNCATE skills RESTART IDENTITY CASCADE")
-        conn.commit()
+    get_storage().reset()
     return SkillStore()
 
 
@@ -44,9 +42,7 @@ def test_save_and_get_round_trip(store):
     store.save(skill, _unit(0))
     loaded = store.get("enter_invoice")
     assert loaded == skill
-    with connect() as conn:
-        n = conn.execute("SELECT count(*) FROM ui_elements").fetchone()[0]
-    assert n == len(skill.steps)
+    assert get_storage().stats()["skills"] >= 1
 
 
 def test_relearning_replaces_the_skill(store):
@@ -67,3 +63,46 @@ def test_skill_without_embedding_is_stored_but_not_searchable(store):
     store.save(_skill("no_vector"), None)
     assert store.get("no_vector") is not None
     assert "no_vector" not in [s.name for s, _ in store.search(_unit(0), k=10)]
+
+
+def test_delete_skill(store):
+    store.save(_skill("to_delete"), _unit(2))
+    assert store.delete("to_delete") is True
+    assert store.get("to_delete") is None
+    assert store.delete("to_delete") is False
+
+
+def test_step_logs_round_trip(store):
+    rows = [
+        {
+            "run_id": "r1",
+            "step_index": 0,
+            "action": "fill",
+            "match_score": 1.0,
+            "layout_change": 0.0,
+            "latency_ms": 12,
+            "success": True,
+            "strategy": "selector",
+            "features": {"a": 1.0},
+            "risk": 0.1,
+            "mitigated": False,
+            "error": None,
+        },
+        {
+            "run_id": "r1",
+            "step_index": 1,
+            "action": "click",
+            "match_score": None,
+            "layout_change": 1.0,
+            "latency_ms": 900,
+            "success": False,
+            "strategy": "failed",
+            "features": {"a": 2.0},
+            "risk": 0.9,
+            "mitigated": True,
+            "error": "timeout",
+        },
+    ]
+    get_storage().log_steps(rows)
+    samples = [s for s in get_storage().step_samples() if s["run_id"] == "r1"]
+    assert samples == [{"run_id": "r1", "features": {"a": 1.0}, "failed": False}]

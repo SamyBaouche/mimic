@@ -16,9 +16,9 @@ from mimic.agent import ReplayAgent, _same_value  # noqa: E402
 from mimic.models import Recording  # noqa: E402
 from mimic.recorder import launch_browser  # noqa: E402
 from mimic.run import run_batch  # noqa: E402
+from mimic.sandbox.app import app  # noqa: E402
+from mimic.sandbox.generate_invoices import generate  # noqa: E402
 from mimic.skills import apply_refinement, draft_skill  # noqa: E402
-from sandbox.app import app  # noqa: E402
-from sandbox.generate_invoices import generate  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "enter_invoice.json"
 

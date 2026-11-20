@@ -10,12 +10,12 @@ repairs itself when the interface changes, and asks you before it acts.**
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](#quickstart)
 [![LangGraph](https://img.shields.io/badge/Agent-LangGraph-1C3C3C)](#how-it-works)
 [![Ollama](https://img.shields.io/badge/Models-100%25%20local-000000?logo=ollama&logoColor=white)](#quickstart)
-[![pgvector](https://img.shields.io/badge/Memory-pgvector-4169E1?logo=postgresql&logoColor=white)](#how-it-works)
+[![Memory](https://img.shields.io/badge/Memory-SQLite%20%7C%20pgvector-4169E1?logo=postgresql&logoColor=white)](#how-it-works)
 [![XGBoost](https://img.shields.io/badge/ML-XGBoost-EB6E00)](#predicting-failures)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<!-- Record docs/demo.gif and it will appear here -->
-<img src="docs/demo.gif" alt="Mimic demo: replays a task, survives a redesign" width="820"/>
+<!-- Demo GIF goes here once recorded:
+<img src="docs/demo.gif" alt="Mimic demo: replays a task, survives a redesign" width="820"/> -->
 
 [Results](#results) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Roadmap](#roadmap)
 
@@ -38,15 +38,17 @@ repairs itself when the interface changes, and asks you before it acts.**
 
 ## Results
 
-<sub>LedgerLite sandbox · 50 invoices per run · local models on a consumer PC · graded against what the app really recorded</sub>
+<sub>Local models on a consumer PC · every result checked against what the app really saved</sub>
 
 | | Without Mimic's safeguards | With Mimic |
 |:--|:--:|:--:|
-| Replay of a learned task | — | **100%** success (50/50) |
+| Replay of a learned task (sandbox, 50 invoices) | — | **100%** success (50/50) |
+| **Real app it was not built for** (stock Django admin, 30 rows from Excel) | — | **30/30** saved correctly, **0.44 s** per row |
 | After a UI redesign | **0%** | **100%** |
-| Cost of a repair | — | **8.4 s** first time → **0.3 s** from memory |
+| Cost of a repair | — | **8.4 s** with vision → **7.7 ms** with the fine-tuned matcher |
+| Reading invoice PDFs (3 layouts) | 76% of fields right | **96%** right, **100%** of errors flagged |
 | Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
-| ⏱ Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
+| Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
 
 ## How it works
 
@@ -121,9 +123,29 @@ Values are normalised (`22/02/2026` → `2026-02-22`, `3 389,96 $` → `3389.96`
 `Software`), and anything uncertain is flagged in the plan for you to check.
 
 ```bash
-uv run python -m sandbox.generate_documents          # 50 invoice PDFs, 3 different layouts
-uv run python -m mimic.extract eval                  # field-level accuracy vs ground truth
-uv run python -m mimic.run --skill enter_invoice --docs sandbox/data/documents --limit 5
+mimic sandbox                                       # also writes 50 invoice PDFs, 3 layouts
+mimic extract eval                                  # field-level accuracy vs ground truth
+mimic run enter_invoice --docs sandbox/data/documents --limit 5
+```
+
+### Real apps, not just the sandbox
+
+The sandbox was built to be hard in known ways; a real app is hard in unknown ones. So Mimic is
+also tested on a **stock Django admin**, the kind of internal tool many companies run, with
+markup Mimic was not designed around (labels without `for`, `<fieldset>` legends, buttons
+written as `<input value="Save">`, dropdowns whose label differs from their value).
+
+- **Every common action:** text, dates, numbers, dropdowns, radio buttons, checkboxes, file
+  uploads, Enter in a search box, and flows over several pages.
+- **Knows when it worked:** at the end of the demo Mimic remembers the page and the
+  confirmation message ("The expense “Taxi” was added successfully."). On every replay it
+  checks for the same kind of message, with the ids and values of that task.
+- **Skips what the app skips:** signed in after the first task? The sign-in steps are skipped.
+- **Your data as it is:** an Excel or CSV file with your own column names (`Date`, `Montant`);
+  each row comes back with `done` / `failed` and the reason, and `--only-failed` retries the rest.
+
+```bash
+uv run python scripts/realapp_benchmark.py --rows 30   # starts the admin, records, replays, checks the DB
 ```
 
 ### Distilling vision into a small model
@@ -139,7 +161,7 @@ MiniLM cross-encoder fine-tuned on thousands of synthetic redesigns ("Save invoi
 
 ```bash
 uv sync --extra matcher
-uv run python -m mimic.matcher train     # downloads MiniLM once, fine-tunes, evaluates
+mimic matcher train     # downloads MiniLM once, fine-tunes, evaluates
 ```
 
 <details>
@@ -160,36 +182,55 @@ uv run python -m mimic.matcher train     # downloads MiniLM once, fine-tunes, ev
 
 ## Quickstart
 
-**You need:** Python 3.11+, [uv](https://docs.astral.sh/uv/), [Ollama](https://ollama.com), Docker Desktop.
+**You need:** Python 3.11+ and [Ollama](https://ollama.com). No database to install.
 
 ```bash
-# 1. Models (run locally, use your GPU / Apple Silicon)
+pip install mimic-agent
+playwright install chromium
 ollama pull qwen2.5vl:7b && ollama pull qwen2.5:7b && ollama pull nomic-embed-text
 
-# 2. Project
+mimic doctor        # checks the browser, the models and storage, and says how to fix what is missing
+```
+
+Try it on the demo app (a small accounts-payable tool) in a second terminal:
+
+```bash
+mimic sandbox       # http://localhost:8001, plus 50 demo invoices and PDFs in ./sandbox/data
+```
+
+Then **teach, learn, run**:
+
+```bash
+mimic record enter_invoice --url http://localhost:8001   # do the task once in the browser
+mimic learn recordings/enter_invoice/recording.json     # turn it into a skill
+mimic run enter_invoice --limit 5 --show                 # watch it repeat the task
+mimic run enter_invoice --layout v2                      # survive a redesign
+mimic serve                                              # or drive it from the live dashboard
+```
+
+**Passwords are never recorded.** If a demo types into a password-like field, the value stays in
+the browser and the skill gets a secret parameter. Give it for the session:
+`MIMIC_SECRET_PASSWORD=...` (PowerShell: `$env:MIMIC_SECRET_PASSWORD="..."`).
+
+<details>
+<summary><b>Install from source, optional extras (click to expand)</b></summary>
+<br/>
+
+```bash
 git clone https://github.com/SamyBaouche/mimic.git && cd mimic
-cp .env.example .env                  # Windows: Copy-Item .env.example .env
-uv sync --extra agent && uv run playwright install chromium
-
-# 3. Database
-docker compose up -d && uv run python -m mimic.db
-uv run python -m sandbox.generate_invoices
+uv sync && uv run playwright install chromium
+uv run mimic doctor
+uv run pytest
 ```
 
-In a second terminal, start the demo app:
+| Extra | Adds |
+|:--|:--|
+| `mimic-agent[ml]` | XGBoost failure-risk model (`mimic risk ...`, `--risk-policy predicted`) |
+| `mimic-agent[matcher]` | Fine-tuned Hugging Face element matcher (`mimic matcher train`) |
+| `mimic-agent[postgres]` | Postgres + pgvector storage (`DATABASE_URL=postgresql://...`, `docker compose up -d`) |
+| `mimic-agent[all]` | Everything above |
 
-```bash
-uv run uvicorn sandbox.app:app --port 8001
-```
-
-Then **teach → learn → run**:
-
-```bash
-uv run python -m mimic.recorder --name enter_invoice --url http://localhost:8001   # do it once
-uv run python -m mimic.learn learn recordings/enter_invoice/recording.json         # learn it
-uv run python -m mimic.run --skill enter_invoice --show --limit 5                  # watch it work
-uv run python -m mimic.run --skill enter_invoice --layout v2 --debug               # survive a redesign
-```
+</details>
 
 <details>
 <summary><b>All commands (click to expand)</b></summary>
@@ -197,19 +238,22 @@ uv run python -m mimic.run --skill enter_invoice --layout v2 --debug            
 
 | Command | What it does |
 |:--|:--|
-| `mimic.recorder --name N --url U` | Record one demonstration |
-| `mimic.learn learn PATH` | Turn a recording into a reusable skill |
-| `mimic.learn search "record supplier bills"` | Find a skill by meaning |
-| `mimic.run --skill N` | Replay on a batch, with plan review |
+| `mimic doctor` | Check browser, local models, storage; print the fix for anything missing |
+| `mimic sandbox [--port 8001]` | Start the demo app and write demo invoices and PDFs |
+| `mimic record NAME --url URL` | Record one demonstration |
+| `mimic learn PATH` | Turn a recording into a reusable skill |
+| `mimic skills` · `show N` · `search "TEXT"` · `delete N` | Manage the skill library |
+| `mimic run N --data FILE.xlsx` | Replay on every row of an Excel / CSV / JSON file, with plan review |
+| `--only-failed` · `--results out.xlsx` | Retry only the rows not done · choose where results go |
 | `--yes` | Skip the review (trusted skills only) |
 | `--confirm-submit --show` | Fill the form, then ask before pressing submit |
 | `--layout v2` · `--no-heal` · `--debug` | Redesigned UI · baseline · show healing decisions |
 | `--chaos 0.4 --risk-policy predicted` | Flaky pages, fix only the risky steps |
-| `mimic.riskml collect` · `train` · `evaluate` | Telemetry → XGBoost → A/B test |
-| `mimic.matcher train` · `evaluate` | Fine-tune the Hugging Face element matcher |
-| `--no-matcher` | Heal without the fine-tuned matcher |
 | `--docs FOLDER` | Read the inputs from PDFs / photos instead of a data file |
-| `mimic.extract read FILE` · `eval` | Extract one document · measure extraction accuracy |
+| `mimic serve [--port 8765]` | Live dashboard: watch the agent, approve from the browser |
+| `mimic read FILE` · `mimic extract eval` | Extract one document · measure extraction accuracy |
+| `mimic risk collect` · `train` · `evaluate` | Telemetry, XGBoost, A/B test |
+| `mimic matcher train` · `evaluate` | Fine-tune the Hugging Face element matcher |
 
 </details>
 
@@ -224,6 +268,7 @@ A small accounts-payable app used to train and grade the agent.
 | `/?layout=v1` | Original interface |
 | `/?layout=v2` | Redesign: fields reordered, button renamed and moved, decoy buttons, new ids |
 | `/?chaos=0.4&seed=1` | Reproducible flakiness: cookie banner, slow buttons, renamed labels, HTTP 500 |
+| `/login` | Sign-in page (user `demo`, password `ledger-demo-2026`) to try secret fields |
 | `/api/entries` | What was really recorded, used to grade the agent |
 
 </details>
@@ -235,9 +280,10 @@ A small accounts-payable app used to train and grade the agent.
 | Agent | LangGraph · Playwright |
 | Models (local) | Ollama · Qwen2.5 · Qwen2.5-VL · nomic-embed-text |
 | Fine-tuning | Hugging Face Transformers · PyTorch · MiniLM cross-encoder |
-| Memory & data | PostgreSQL · pgvector |
+| Memory & data | SQLite (default) · PostgreSQL + pgvector |
 | Machine learning | XGBoost · scikit-learn |
-| API & quality | FastAPI · pytest (107 tests) · Ruff · GitHub Actions |
+| Dashboard & CLI | FastAPI · WebSocket · Chrome DevTools Protocol screencast · `mimic` CLI |
+| Quality | pytest (149 tests) · Ruff · GitHub Actions |
 
 ## Roadmap
 
@@ -246,17 +292,25 @@ A small accounts-payable app used to train and grade the agent.
 - [x] XGBoost failure risk model with fair A/B evaluation
 - [x] Fine-tuned Hugging Face element matcher (vision only when unsure)
 - [x] Read inputs from documents (PDF, photos) with per-field confidence
-- [ ] `pip install mimic-agent`, a `mimic` CLI, `mimic doctor`
-- [ ] Checkboxes, radio buttons, keyboard, uploads, multi-page flows
+- [x] Live dashboard: streamed agent browser, approve / edit / skip / pause from the page
+- [x] `pip install mimic-agent`, a `mimic` CLI, `mimic doctor`, SQLite by default
+- [x] Passwords never recorded: secret fields become run-time parameters
+- [x] Checkboxes, radio buttons, Enter, uploads, multi-page flows; tested on a real Django admin
+- [x] Success learned from the demo's confirmation; Excel / CSV in, results file out
 - [ ] WorkSuite sandbox: mail, tickets, expenses, approvals
 - [ ] Learn from a screen-recording video
 - [ ] Browser extension to record in one click
 
 ## Limitations
 
-Mimic works on **web apps** for now, learns from **live demonstrations** (not videos yet), and
-was measured on a sandbox built to be hard in known ways. Real sites will bring new surprises:
-that is exactly where [contributions](CONTRIBUTING.md) help most.
+- **Web apps only** for now, learned from **live demonstrations** (not videos yet).
+- A skill **repeats one path**. Decisions ("if the amount is over 5 000 $, send for approval")
+  are not learned yet.
+- A field you **leave at its default** during the demo is not learned: change it once if
+  other tasks need another value.
+- **Captchas and two-factor codes** are not bypassed, by design: Mimic stops and asks you.
+- Measured on a sandbox and on a stock Django admin. Every new app will bring new surprises:
+  that is exactly where [contributions](CONTRIBUTING.md) help most.
 
 ---
 

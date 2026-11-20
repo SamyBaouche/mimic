@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import uuid
 from collections import Counter
@@ -20,16 +21,17 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 from playwright.sync_api import sync_playwright
-from psycopg.types.json import Jsonb
 
 from mimic.agent import ReplayAgent, StepResult
-from mimic.approval import ConsoleApprover, build_aliases
+from mimic.approval import ConsoleApprover, build_aliases, plan_label, plan_rows
 from mimic.config import get_settings
 from mimic.healing import Healer, HealMemory
+from mimic.live import Screencast
 from mimic.llm import OllamaClient
 from mimic.mapping import apply_mapping, map_inputs
+from mimic.outcome import check_signal
 from mimic.recorder import launch_browser
-from mimic.skills import Skill
+from mimic.skills import Skill, secret_env
 from mimic.vision import VisionLocator
 
 
@@ -44,52 +46,64 @@ def _base(url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+class MissingSecret(ValueError):
+    pass
+
+
+def check_secrets(skill: Skill, record: dict) -> None:
+    """Secret fields (passwords...) come from the data or MIMIC_SECRET_<NAME>, never the skill."""
+    missing = [p for p in skill.secrets if p not in record and not os.environ.get(secret_env(p))]
+    if missing:
+        names = ", ".join(secret_env(p) for p in missing)
+        raise MissingSecret(
+            f"Skill '{skill.name}' types a secret ({', '.join(missing)}) that is never stored. "
+            f'Set it for this session: {names} (PowerShell: $env:{secret_env(missing[0])}="...")'
+        )
+
+
 class StepLogger:
-    """Writes step telemetry to Postgres: the training data of the failure risk model."""
+    """Writes step telemetry to storage: the training data of the failure risk model."""
 
     def __init__(self, run_id: str, enabled: bool = True):
         self.run_id = run_id
         self.enabled = enabled
-        self.rows: list[tuple] = []
+        self.rows: list[dict] = []
 
     def __call__(self, step: StepResult) -> None:
         # How far the UI drifted from the demo for this step: 0 exact, 0.5 fallback, 1 healed.
         layout_change = 1.0 if step.healed else (0.5 if step.fallbacks else 0.0)
         self.rows.append(
-            (
-                self.run_id,
-                step.index,
-                step.action,
-                step.confidence,
-                layout_change,
-                step.latency_ms,
-                step.success,
-                step.strategy,
-                Jsonb(step.features) if step.features is not None else None,
-                step.risk,
-                bool(step.mitigations),
-                step.error,
-            )
+            {
+                "run_id": self.run_id,
+                "step_index": step.index,
+                "action": step.action,
+                "match_score": step.confidence,
+                "layout_change": layout_change,
+                "latency_ms": step.latency_ms,
+                "success": step.success,
+                "strategy": step.strategy,
+                "features": step.features,
+                "risk": step.risk,
+                "mitigated": bool(step.mitigations),
+                "error": step.error,
+            }
         )
 
     def flush(self) -> None:
         if not self.enabled or not self.rows:
             return
         try:
-            from mimic.db import connect
+            from mimic.storage import get_storage
 
-            with connect() as conn, conn.cursor() as cur:
-                cur.executemany(
-                    """INSERT INTO step_logs (run_id, step_index, action, match_score,
-                       layout_change, latency_ms, success, strategy, features, risk,
-                       mitigated, error)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    self.rows,
-                )
-                conn.commit()
+            get_storage().log_steps(self.rows)
         except Exception as exc:  # noqa: BLE001
-            print(f"  ! Telemetry not saved ({type(exc).__name__}).")
+            print(f"  ! Telemetry not saved ({type(exc).__name__}: {exc}).")
         self.rows.clear()
+
+
+def emit_is_live(emit) -> bool:
+    """Only stream frames when someone is watching (the dashboard sets this attribute)."""
+    return bool(getattr(emit, "wants_frames", False))
 
 
 def _same(a, b) -> bool:
@@ -155,9 +169,34 @@ def run_batch(
     truth: list[dict] | None = None,  # what the app should record, if not the records
     titles: list[str] | None = None,  # shown in the plan review (e.g. document names)
     flags: list[dict] | None = None,  # per record: parameter -> reason to double-check
+    emit=None,  # callable(event dict): live events for the dashboard (see events.py)
 ) -> dict:
+    emit = emit or (lambda event: None)
     settings = get_settings()
-    mapping = map_inputs(skill.parameters, list(records[0]), client, settings.planner_model)
+    secrets = skill.secrets
+    check_secrets(skill, records[0])
+    plain = [p for p in skill.parameters if p not in secrets]
+    fields = [f for f in records[0] if f not in secrets]
+    # Values typed in the demo stand in for columns your data does not have (e.g. a user
+    # name on a sign-in page). Uploads and secrets never do.
+    demo_values = {
+        st.parameter: st.value
+        for st in skill.steps
+        if st.parameter and st.value is not None and st.action not in ("upload",) and not st.secret
+    }
+    aliases = {
+        st.parameter: [st.element.label or "", st.element.name or "", st.element.placeholder or ""]
+        for st in skill.steps
+        if st.parameter
+    }
+    mapping = map_inputs(
+        plain, fields, client, settings.planner_model, aliases=aliases, optional=set(demo_values)
+    )
+    from_demo = {p: demo_values[p] for p in plain if p not in mapping}
+    for p, v in from_demo.items():
+        note = f"No column for '{p}': every task uses '{v}' from your demo."
+        print(f"  ! {note}")
+        emit({"type": "status", "message": note})
     grader = AppGrader(url)
     grader.reset()
 
@@ -165,15 +204,46 @@ def run_batch(
     logger = StepLogger(run_id, enabled=log_to_db)
     results = []
     t0 = time.monotonic()
+    current: dict = {"index": 0, "actions": []}
+    emit(
+        {
+            "type": "run_started",
+            "run_id": run_id,
+            "skill": skill.name,
+            "total": len(records),
+            "layout": layout,
+            "url": url,
+        }
+    )
+
+    def on_step(step: StepResult) -> None:
+        logger(step)
+        action = current["actions"][step.index] if step.index < len(current["actions"]) else {}
+        emit(
+            {
+                "type": "step",
+                "task": current["index"],
+                "index": step.index,
+                "action": step.action,
+                "label": plan_label(action) if action else "",
+                "success": step.success,
+                "strategy": step.strategy,
+                "healed": step.healed,
+                "confidence": step.confidence,
+                "latency_ms": step.latency_ms,
+                "error": step.error,
+            }
+        )
 
     with sync_playwright() as p:
         browser = launch_browser(p, headless=not show)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         if show:
             page.set_default_timeout(5000)
+        live = Screencast(page, emit).start() if emit_is_live(emit) else None
         agent = ReplayAgent(
             page,
-            on_step=logger,
+            on_step=on_step,
             healer=healer,
             skill_name=skill.name,
             before_submit=approver.confirm_submit if approver else None,
@@ -184,10 +254,18 @@ def run_batch(
         if approver is not None:
             approver.aliases = build_aliases(skill, mapping)
         expected_records: list[dict] = []  # what each executed task should have recorded
+        executed_index: list[int] = []  # record number (1-based) of each executed task
+        rows: dict[int, dict] = {}  # what happened to each input row, for the results file
         skipped = 0
         for i, record in enumerate(records, 1):
-            inputs = apply_mapping(record, mapping)
+            if approver is not None and not getattr(approver, "checkpoint", lambda: True)():
+                print("  Stopped by user.")
+                break
+            inputs = from_demo | apply_mapping(record, mapping)
+            inputs |= {p: record[p] for p in secrets if p in record}
             expected = dict(truth[i - 1]) if truth else dict(record)
+            for p in secrets:  # the app never shows a password back: do not grade it
+                expected.pop(p, None)
             record_flags = flags[i - 1] if flags else {}
             if approver is not None:
                 title = titles[i - 1] if titles else str(next(iter(record.values()), ""))
@@ -199,45 +277,138 @@ def run_batch(
                     break
                 if decision.action == "skip":
                     skipped += 1
+                    rows[i] = {"index": i, "status": "skipped", "error": "skipped by you"}
                     print(f"  Task {i:>3}/{len(records)}  ⏭  skipped by user")
+                    emit(
+                        {
+                            "type": "task_done",
+                            "index": i,
+                            "status": "skipped",
+                            "reason": "skipped by you",
+                        }
+                    )
                     continue
                 if not truth:
                     for param, value in decision.edits.items():
                         expected[mapping[param]] = value
                 if any(a["action"] != "click" and a["value"] in (None, "None") for a in actions):
                     skipped += 1
+                    rows[i] = {"index": i, "status": "skipped", "error": "a value is missing"}
                     print(f"  Task {i:>3}/{len(records)}  ⏭  skipped: a value is still missing")
+                    emit(
+                        {
+                            "type": "task_done",
+                            "index": i,
+                            "status": "skipped",
+                            "reason": "a value is still missing",
+                        }
+                    )
                     continue
             else:
                 missing = [p for p, v in inputs.items() if v is None]
                 if missing:
                     skipped += 1
+                    rows[i] = {"index": i, "status": "skipped", "error": f"missing {missing}"}
                     print(f"  Task {i:>3}/{len(records)}  ⏭  skipped: missing {missing}")
+                    emit(
+                        {
+                            "type": "task_done",
+                            "index": i,
+                            "status": "skipped",
+                            "reason": f"missing {', '.join(missing)}",
+                        }
+                    )
                     continue
                 actions = skill.render(inputs)
 
+            if not truth:
+                # Your column names ("Invoice number") are not the app's ("invoice_number"):
+                # also expect each value under the name of the field it was typed into.
+                expected |= {
+                    a["element"].name: a["value"]
+                    for a in actions
+                    if a["action"] in ("fill", "select") and a["element"].name and not a["secret"]
+                }
             seed = None if seed_base is None else seed_base + i
+            title = titles[i - 1] if titles else str(next(iter(record.values()), ""))
+            current.update(index=i, actions=actions)
+            emit(
+                {
+                    "type": "task_started",
+                    "index": i,
+                    "total": len(records),
+                    "title": title,
+                    "plan": plan_rows(actions, record_flags),
+                }
+            )
             page.goto(_with_layout(url, layout, chaos=chaos or None, seed=seed))
             result = agent.run(actions)
+            if result.success and skill.success is not None:
+                # Every step worked: now check the page looks like the end of the demo.
+                problem = check_signal(page, skill.success)
+                if problem:
+                    result.success, result.error = False, problem
             if result.skipped:
                 skipped += 1
+                rows[i] = {"index": i, "status": "skipped", "error": "submit declined by you"}
                 print(f"  Task {i:>3}/{len(records)}  ⏭  submit declined by user")
+                emit(
+                    {
+                        "type": "task_done",
+                        "index": i,
+                        "status": "skipped",
+                        "reason": "submit declined by you",
+                    }
+                )
                 continue
             results.append(result)
             expected_records.append(expected)
+            executed_index.append(i)
             healed = [s.index for s in result.steps if s.healed]
             mark = "✅" if result.success else f"❌ step {len(result.steps) - 1}: {result.error}"
             if healed:
                 strategies = ",".join(s.strategy for s in result.steps if s.healed)
                 mark += f"  🩹 healed step {healed} via {strategies}"
             print(f"  Task {i:>3}/{len(records)}  {result.duration_ms:>5} ms  {mark}")
+            emit(
+                {
+                    "type": "task_done",
+                    "index": i,
+                    "status": "ok" if result.success else "failed",
+                    "ms": result.duration_ms,
+                    "error": result.error,
+                    "healed": [s.strategy for s in result.steps if s.healed],
+                    "done": len(results),
+                    "succeeded": sum(r.success for r in results),
+                    "skipped": skipped,
+                    "avg_ms": int(sum(r.duration_ms for r in results) / len(results)),
+                }
+            )
+        if live is not None:
+            page.wait_for_timeout(500)  # let the last submit reach the screen
+            live.stop()
         browser.close()
 
     logger.flush()
     executed = max(len(expected_records), 1)
-    correct = grader.grade(expected_records)
-    if correct is None:  # no ground truth on this site: trust the agent's verified steps
+    # Ground truth, best first: the app's own records (sandbox invoices, skills without a
+    # learned signal), else the confirmation learned from the demo, else the agent's checks.
+    correct = grader.grade(expected_records) if skill.success is None else None
+    graded_by = (
+        "application"
+        if correct is not None
+        else ("confirmation" if skill.success is not None else "agent")
+    )
+    if correct is None:
         correct = [r.success for r in results]
+    for ok, i, r in zip(correct, executed_index, results, strict=True):
+        error = None if ok else (r.error or "the application did not record it")
+        rows[i] = {
+            "index": i,
+            "status": "done" if ok else "failed",
+            "error": error,
+            "ms": r.duration_ms,
+        }
 
     steps = [s for r in results for s in r.steps]
     report = {
@@ -248,7 +419,8 @@ def run_batch(
         "executed": len(expected_records),
         "skipped_by_user": skipped,
         "task_success_rate": round(sum(correct) / executed, 4),
-        "graded_by": "application" if grader.available else "agent",
+        "graded_by": graded_by,
+        "rows": [rows[i] for i in sorted(rows)],
         "agent_reported_success_rate": round(sum(r.success for r in results) / executed, 4),
         "step_success_rate": round(sum(s.success for s in steps) / max(len(steps), 1), 4),
         "avg_task_ms": int(sum(r.duration_ms for r in results) / max(len(results), 1)),
@@ -268,6 +440,7 @@ def run_batch(
     if out_dir:
         out_dir.mkdir(exist_ok=True)
         (out_dir / f"{run_id}.json").write_text(json.dumps(report, indent=2))
+    emit({"type": "run_done", "report": {k: v for k, v in report.items() if k != "steps"}})
     return report
 
 
@@ -295,7 +468,7 @@ def collect_options(skill: Skill, url: str, layout: str = "v1") -> dict[str, lis
 
 
 def records_from_documents(
-    skill: Skill, folder: Path, extractor, options: dict, limit: int | None = None
+    skill: Skill, folder: Path, extractor, options: dict, limit: int | None = None, emit=None
 ):
     """Extract one record per document. Returns records, titles, flags and truth (if any)."""
     from mimic.extract import LOW_CONFIDENCE, field_specs, list_documents
@@ -316,7 +489,20 @@ def records_from_documents(
                 record_flags[param] = got.note or f"low confidence {got.confidence:.2f}"
         status = f"{len(record_flags)} field(s) to check" if record_flags else "all fields read"
         print(f"  {doc.name:<24} {ex.seconds:5.1f} s  {status}")
-        records.append(ex.inputs())
+        if emit:
+            emit(
+                {
+                    "type": "reading",
+                    "index": len(records) + 1,
+                    "total": len(docs),
+                    "name": doc.name,
+                    "seconds": round(ex.seconds, 1),
+                    "to_check": len(record_flags),
+                }
+            )
+        # A file upload in the skill (e.g. "Receipt") gets the document that was just read.
+        uploads = {st.parameter: str(doc.resolve()) for st in skill.steps if st.action == "upload"}
+        records.append({**ex.inputs(), **uploads})
         titles.append(doc.name)
         flags.append(record_flags)
         if doc.name in truth_map:
@@ -365,10 +551,22 @@ def print_report(report: dict) -> None:
         print(f"Failures          : {report['failures']}")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Replay a skill on a batch of tasks.")
     parser.add_argument("--skill", required=True)
-    parser.add_argument("--data", type=Path, default=Path("sandbox/data/invoices.json"))
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=Path("sandbox/data/invoices.json"),
+        help="Tasks to do, one per row: .xlsx, .csv or .json",
+    )
+    parser.add_argument("--sheet", default=None, help="Excel sheet name (default: the first)")
+    parser.add_argument(
+        "--only-failed", action="store_true", help="With a results file: redo what is not done"
+    )
+    parser.add_argument(
+        "--results", type=Path, default=None, help="Where to write the results (.csv or .xlsx)"
+    )
     parser.add_argument(
         "--docs", type=Path, default=None, help="Folder of PDFs/images to read the inputs from"
     )
@@ -387,13 +585,13 @@ def main() -> None:
     parser.add_argument(
         "--confirm-submit", action="store_true", help="Ask before each submit (use with --show)"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     from mimic.store import SkillStore
 
     skill = SkillStore().get(args.skill)
     if skill is None:
-        raise SystemExit(f"Unknown skill '{args.skill}'. Run: python -m mimic.learn list")
+        raise SystemExit(f"Unknown skill '{args.skill}'. See your skills with: mimic skills")
     url = args.url or skill.start_url or get_settings().sandbox_url
     titles = flags = truth = None
     if args.docs:
@@ -405,7 +603,17 @@ def main() -> None:
             skill, args.docs, extractor, options, args.limit
         )
     else:
-        records = json.loads(args.data.read_text(encoding="utf-8"))[: args.limit]
+        from mimic.tables import load_records, only_failed, strip_results
+
+        try:
+            records = load_records(args.data, args.sheet)
+            if args.only_failed:
+                records = only_failed(records)
+        except (OSError, ValueError, KeyError) as exc:
+            raise SystemExit(f"Cannot read {args.data}: {exc}") from None
+        records = strip_results(records)[: args.limit]
+        if not records:
+            raise SystemExit(f"Nothing to do in {args.data}.")
 
     print(f"Running '{skill.name}' on {len(records)} tasks ({args.layout})...")
     settings = get_settings()
@@ -425,25 +633,41 @@ def main() -> None:
         from mimic.risk import RiskModel
 
         risk_model = RiskModel.load()
-    report = run_batch(
-        skill,
-        records,
-        url,
-        args.layout,
-        args.show,
-        client=client,
-        healer=healer,
-        approver=approver,
-        chaos=args.chaos,
-        seed_base=args.seed,
-        risk_policy=args.risk_policy,
-        risk_model=risk_model,
-        truth=truth,
-        titles=titles,
-        flags=flags,
-    )
+    try:
+        report = run_batch(
+            skill,
+            records,
+            url,
+            args.layout,
+            args.show,
+            client=client,
+            healer=healer,
+            approver=approver,
+            chaos=args.chaos,
+            seed_base=args.seed,
+            risk_policy=args.risk_policy,
+            risk_model=risk_model,
+            truth=truth,
+            titles=titles,
+            flags=flags,
+        )
+    except MissingSecret as exc:
+        raise SystemExit(f"\n{exc}") from None
     print_report(report)
     print(f"\nReport saved to reports/{report['run_id']}.json")
+
+    from mimic.tables import write_results
+
+    path = write_results(
+        args.results or Path("reports") / f"{report['run_id']}-results.csv", records, report["rows"]
+    )
+    left = sum(r["status"] != "done" for r in report["rows"]) + len(records) - len(report["rows"])
+    print(f"Results per row: {path}")
+    if left:
+        print(
+            f"{left} row(s) not done. Retry them:"
+            f" mimic run {skill.name} --data {path} --only-failed"
+        )
 
 
 if __name__ == "__main__":

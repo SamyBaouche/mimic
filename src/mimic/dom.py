@@ -13,6 +13,13 @@ KIND_SELECTORS = {
         ":not([type=checkbox]):not([type=radio]), textarea"
     ),
     "select": "select",
+    "check": "input[type=checkbox], [role=checkbox], [role=switch]",
+    "choose": "input[type=radio], [role=radio]",
+    "upload": "input[type=file]",
+    "press": (
+        "input:not([type=hidden]):not([type=submit]):not([type=button])"
+        ":not([type=checkbox]):not([type=radio]), textarea"
+    ),
 }
 
 _DESCRIBE = r"""
@@ -32,15 +39,41 @@ const cssPath = (el) => {
   return 'body > ' + parts.join(' > ');
 };
 const labelOf = (el) => {
-  if (el.labels && el.labels.length) return el.labels[0].innerText.trim();
-  return el.getAttribute('aria-label') || null;
+  if (el.labels && el.labels.length) return el.labels[0].innerText.trim() || null;
+  const by = el.getAttribute('aria-labelledby');
+  if (by) {
+    const t = by.split(/\s+/).map(id => document.getElementById(id)?.innerText || '').join(' ');
+    if (t.trim()) return t.trim();
+  }
+  if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+  // A field alone in a fieldset is named by its legend.
+  const fs = el.closest('fieldset');
+  if (fs && fs.querySelector('legend') &&
+      fs.querySelectorAll('input:not([type=hidden]), select, textarea').length === 1) {
+    return fs.querySelector('legend').innerText.trim() || null;
+  }
+  // A label right next to the field but not tied to it (common in admin screens).
+  let box = el.parentElement;
+  for (let depth = 0; box && box !== document.body && depth < 3; depth++) {
+    const loose = [...box.querySelectorAll('label')].filter(
+      l => !l.htmlFor && !l.querySelector('input, select, textarea'));
+    if (loose.length === 1 && box.querySelectorAll('input, select, textarea').length <= 2) {
+      return loose[0].innerText.trim() || null;
+    }
+    box = box.parentElement;
+  }
+  return null;
 };
+// Buttons written as <input type=submit value="Save"> have no inner text: use the value.
+const textOf = (el) => (el.innerText || '').trim().slice(0, 80) ||
+  (el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type) ? el.value : '') ||
+  null;
 const describe = (el) => {
   const r = el.getBoundingClientRect();
   return {
     tag: el.tagName.toLowerCase(), selector: cssPath(el), id: el.id || null,
     name: el.getAttribute('name'), type: el.getAttribute('type'), label: labelOf(el),
-    text: (el.innerText || '').trim().slice(0, 80) || null,
+    text: textOf(el),
     placeholder: el.getAttribute('placeholder'),
     options: el.tagName === 'SELECT' ? [...el.options].map(o => o.value || o.text) : [],
     bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
@@ -93,7 +126,15 @@ def element_at(page: Page, x: float, y: float, action: str) -> ElementInfo | Non
 
 def describe_text(el: ElementInfo, action: str) -> str:
     """Short natural-language description used for embeddings and prompts."""
-    kind = {"click": "button", "fill": "input field", "select": "dropdown"}[action]
+    kind = {
+        "click": "button",
+        "fill": "input field",
+        "select": "dropdown",
+        "check": "checkbox",
+        "choose": "radio option",
+        "upload": "file upload",
+        "press": "input field",
+    }[action]
     name = el.label or el.text or el.placeholder or el.name or el.id or "unnamed"
     extra = f" ({el.type})" if el.type and el.type not in ("text", "submit") else ""
     return f"{kind} '{name}'{extra}"

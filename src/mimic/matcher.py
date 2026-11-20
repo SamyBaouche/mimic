@@ -208,7 +208,7 @@ def print_results(meta: dict) -> None:
     print("LedgerLite v2 labels were held out of training: this is generalisation.")
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Element matcher (Hugging Face)")
     sub = parser.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train")
@@ -218,7 +218,7 @@ def main() -> None:
     t.add_argument("--epochs", type=int, default=2)
     t.add_argument("--lr", type=float, default=2e-5)
     sub.add_parser("evaluate")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cmd == "train":
         from transformers import AutoModelForSequenceClassification, AutoTokenizer

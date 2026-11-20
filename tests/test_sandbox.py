@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from sandbox.app import app
-from sandbox.generate_invoices import generate
+from mimic.sandbox.app import app
+from mimic.sandbox.generate_invoices import generate
 
 client = TestClient(app)
 

@@ -105,11 +105,17 @@ def field_specs(skill: Skill, options: dict[str, list[str]] | None = None) -> li
     options = options or {}
     specs = []
     for step in skill.steps:
-        if not step.parameter:
-            continue
+        if not step.parameter or step.secret or step.action == "upload":
+            continue  # uploads get the document itself; secrets never come from a document
         el = step.element
         if step.action == "select":
             kind = "option"
+        elif step.action == "choose":
+            kind = "option"
+            options = {**options, step.parameter: options.get(step.parameter) or el.options}
+        elif step.action == "check":
+            kind = "option"
+            options = {**options, step.parameter: ["yes", "no"]}
         elif el.type == "number":
             kind = "number"
         elif el.type == "date":
@@ -375,7 +381,7 @@ def evaluate(extractor, specs, folder: Path, mapping: dict[str, str], limit=None
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     from mimic.config import get_settings
     from mimic.llm import OllamaClient
     from mimic.mapping import map_inputs
@@ -390,7 +396,7 @@ def main() -> None:
     r = sub.add_parser("read", help="Extract one document and print the values")
     r.add_argument("document", type=Path)
     r.add_argument("--skill", default="enter_invoice")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     settings = get_settings()
     skill = SkillStore().get(args.skill)

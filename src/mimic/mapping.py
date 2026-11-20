@@ -37,9 +37,17 @@ def _score(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb) if ta and tb else 0.0
 
 
-def map_deterministic(parameters: list[str], fields: list[str]) -> dict[str, str]:
+def map_deterministic(
+    parameters: list[str], fields: list[str], aliases: dict[str, list[str]] | None = None
+) -> dict[str, str]:
+    """`aliases`: other names of a parameter, e.g. the label seen on screen ("Date:")."""
+    aliases = aliases or {}
+
+    def score(p: str, f: str) -> float:
+        return max(_score(name, f) for name in [p, *aliases.get(p, [])] if name)
+
     pairs = sorted(
-        ((_score(p, f), p, f) for p in parameters for f in fields),
+        ((score(p, f), p, f) for p in parameters for f in fields),
         key=lambda x: x[0],
         reverse=True,
     )
@@ -70,10 +78,17 @@ MAPPING_SCHEMA = {
 
 
 def map_inputs(
-    parameters: list[str], fields: list[str], client=None, model: str | None = None
+    parameters: list[str],
+    fields: list[str],
+    client=None,
+    model: str | None = None,
+    aliases: dict[str, list[str]] | None = None,
+    optional: set[str] | frozenset = frozenset(),
 ) -> dict[str, str]:
-    """Return {skill_parameter: record_field}. Raises KeyError if a parameter stays unmapped."""
-    mapping = map_deterministic(parameters, fields)
+    """Return {skill_parameter: record_field}. Raises KeyError if a parameter stays unmapped,
+    unless it is `optional` (the caller has a fallback, e.g. the value from the demo)."""
+    aliases = aliases or {}
+    mapping = map_deterministic(parameters, fields, aliases)
     missing = [p for p in parameters if p not in mapping]
     free = [f for f in fields if f not in mapping.values()]
 
@@ -83,7 +98,11 @@ def map_inputs(
                 model,
                 "Match each skill parameter to the data field that holds its value. "
                 "Use only the given names. Answer in JSON.",
-                f"Parameters: {missing}\nData fields: {free}",
+                "Parameters (with the label shown on screen): "
+                + ", ".join(
+                    f"{p} ({' / '.join(a for a in aliases.get(p, []) if a)})" for p in missing
+                )
+                + f"\nData fields: {free}",
                 MAPPING_SCHEMA,
             )
             for item in answer.get("mapping", []):
@@ -93,7 +112,7 @@ def map_inputs(
         except Exception as exc:  # noqa: BLE001
             print(f"  ! LLM mapping skipped ({type(exc).__name__}).")
 
-    still_missing = [p for p in parameters if p not in mapping]
+    still_missing = [p for p in parameters if p not in mapping and p not in optional]
     if still_missing:
         raise KeyError(f"No data field found for parameters {still_missing} (fields: {fields})")
     return mapping

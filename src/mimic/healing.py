@@ -67,12 +67,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _vec(v: list[float]) -> str:
-    return "[" + ",".join(f"{x:.7g}" for x in v) + "]"
-
-
 class HealMemory:
-    """Remembers healed selectors. In-run cache always; Postgres + pgvector when available."""
+    """Remembers healed selectors: in-run cache always, plus the storage backend when enabled."""
 
     def __init__(self, use_db: bool = True):
         self.cache: dict[tuple[str, int, str], str] = {}
@@ -80,7 +76,7 @@ class HealMemory:
         self.dim = get_settings().embedding_dim
 
     def _fits(self, embedding: list[float] | None) -> bool:
-        # The column is vector(dim): a different embedding model must not break the memory.
+        # A different embedding model must not break the memory: compare like with like.
         return embedding is not None and len(embedding) == self.dim
 
     def lookup(self, skill: str, step: int, path: str, embedding: list[float] | None) -> list[str]:
@@ -88,26 +84,14 @@ class HealMemory:
         if not self.use_db:
             return found
         try:
-            from mimic.db import connect
+            from mimic.storage import get_storage
 
-            with connect() as conn:
-                if self._fits(embedding):
-                    # Same step first, then the most similar element healed on this page
-                    # (lets a fix learned by one skill help another skill on the same screen).
-                    rows = conn.execute(
-                        """SELECT selector FROM healed_elements WHERE page_path = %s
-                           ORDER BY (skill_name = %s AND step_index = %s) DESC,
-                                    embedding <=> %s::vector LIMIT 3""",
-                        (path, skill, step, _vec(embedding)),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        """SELECT selector FROM healed_elements
-                           WHERE page_path = %s AND skill_name = %s AND step_index = %s
-                           ORDER BY id DESC LIMIT 3""",
-                        (path, skill, step),
-                    ).fetchall()
-            found += [r[0] for r in rows if r[0] not in found]
+            # Same step first, then the most similar element healed on this page
+            # (lets a fix learned by one skill help another skill on the same screen).
+            rows = get_storage().heal_lookup(
+                skill, step, path, embedding if self._fits(embedding) else None
+            )
+            found += [r for r in rows if r not in found]
         except Exception:  # noqa: BLE001 - memory is an optimisation, never a hard dependency
             pass
         return found
@@ -125,23 +109,11 @@ class HealMemory:
         if not self.use_db:
             return
         try:
-            from mimic.db import connect
+            from mimic.storage import get_storage
 
-            with connect() as conn:
-                conn.execute(
-                    """INSERT INTO healed_elements
-                       (skill_name, step_index, page_path, selector, strategy, embedding)
-                       VALUES (%s, %s, %s, %s, %s, %s::vector)""",
-                    (
-                        skill,
-                        step,
-                        path,
-                        selector,
-                        strategy,
-                        _vec(embedding) if self._fits(embedding) else None,
-                    ),
-                )
-                conn.commit()
+            get_storage().heal_remember(
+                skill, step, path, selector, strategy, embedding if self._fits(embedding) else None
+            )
         except Exception:  # noqa: BLE001
             pass
 

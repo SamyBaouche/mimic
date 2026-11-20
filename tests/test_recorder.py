@@ -12,7 +12,7 @@ pytest.importorskip("playwright")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from mimic.recorder import Recorder, launch_browser  # noqa: E402
-from sandbox.app import ENTRIES, app  # noqa: E402
+from mimic.sandbox.app import ENTRIES, app  # noqa: E402
 
 INVOICE = {
     "vendor": "Bureau Express",

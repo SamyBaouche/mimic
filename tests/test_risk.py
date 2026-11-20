@@ -7,7 +7,7 @@ import pytest
 
 from mimic.risk import FEATURE_NAMES, RiskModel, vectorize
 from mimic.riskml import _best_threshold, _smart_rule, train
-from sandbox.app import draw_chaos
+from mimic.sandbox.app import draw_chaos
 
 
 def test_chaos_is_reproducible_with_a_seed():

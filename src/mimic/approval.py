@@ -10,6 +10,8 @@ Safe by default: the CLI always reviews unless you pass --yes.
 
 from __future__ import annotations
 
+import queue
+import threading
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -45,6 +47,26 @@ def _target(action: dict) -> str:
     return el.label or el.text or el.name or el.selector
 
 
+SECRET_MASK = "********"
+
+
+def display_value(a: dict) -> str:
+    """How a planned value is shown to a person: masked, yes/no, file name..."""
+    from pathlib import Path
+
+    from mimic.agent import as_bool
+
+    if a["value"] in (None, "None"):
+        return "(missing)"
+    if a.get("secret"):
+        return SECRET_MASK
+    if a["action"] == "check":
+        return "yes" if as_bool(a["value"]) else "no"
+    if a["action"] == "upload":
+        return Path(str(a["value"])).name
+    return str(a["value"])
+
+
 def format_plan(
     index: int, total: int, actions: list[dict], title: str = "", flags: dict | None = None
 ) -> str:
@@ -54,7 +76,10 @@ def format_plan(
         if a["action"] == "click":
             lines.append(f"  then click   '{_target(a)}'")
             continue
-        value = "(missing)" if a["value"] in (None, "None") else a["value"]
+        if a["action"] == "press":
+            lines.append(f"  then press   {a['value']} in '{_target(a)}'")
+            continue
+        value = display_value(a)
         note = flags.get(a.get("parameter"), "")
         warn = f"   <- check: {note}" if note else ""
         lines.append(f"  {_target(a):<18} <- {value}{warn}")
@@ -124,6 +149,143 @@ class ConsoleApprover:
             return True
         answer = self.input(f"  Form filled. Press '{_target(action)}' now? [y/N] > ")
         ok = answer.strip().lower() in ("y", "yes", "o", "oui")
+        if not ok:
+            self.stats["declined_submit"] += 1
+        return ok
+
+
+# ---------------------------------------------------------------- dashboard
+
+
+def plan_label(action: dict) -> str:
+    el = action["element"]
+    return el.label or el.text or el.name or el.selector
+
+
+def plan_rows(actions: list[dict], flags: dict | None = None) -> list[dict]:
+    """The plan in a JSON-friendly shape, for the dashboard."""
+    flags = flags or {}
+    return [
+        {
+            "index": a["index"],
+            "action": a["action"],
+            "label": plan_label(a),
+            "parameter": a.get("parameter"),
+            "value": None if a["value"] in (None, "None") else display_value(a),
+            "secret": bool(a.get("secret")),
+            "flag": flags.get(a.get("parameter"), ""),
+        }
+        for a in actions
+    ]
+
+
+class WebApprover(ConsoleApprover):
+    """Same contract as ConsoleApprover, but the decisions come from the dashboard buttons.
+
+    The agent thread blocks in review() until the page sends a decision over the WebSocket:
+    {"action": "approve" | "approve_all" | "skip" | "quit" | "edit", "edits": {...}}
+    Pause / resume / stop are handled between tasks by checkpoint().
+    """
+
+    def __init__(self, publish, confirm_submit: bool = False, poll_s: float = 0.2):
+        super().__init__(input_fn=None, print_fn=lambda *_: None, confirm_submit=confirm_submit)
+        self.publish = publish
+        self.poll_s = poll_s
+        self._decisions: queue.Queue = queue.Queue()
+        self._running = threading.Event()
+        self._running.set()
+        self.stopped = False
+
+    # --- called by the server (asyncio side) ---
+    def decide(self, message: dict) -> None:
+        action = message.get("action")
+        if action == "pause":
+            self._running.clear()
+            self.publish({"type": "paused", "paused": True})
+        elif action == "resume":
+            self._running.set()
+            self.publish({"type": "paused", "paused": False})
+        elif action == "stop":
+            self.stopped = True
+            self._running.set()
+            self._decisions.put({"action": "quit"})
+        else:
+            self._decisions.put(message)
+
+    # --- called by the agent thread ---
+    def _wait(self) -> dict:
+        while True:
+            if self.stopped:
+                return {"action": "quit"}
+            try:
+                return self._decisions.get(timeout=self.poll_s)
+            except queue.Empty:
+                continue
+
+    def checkpoint(self) -> bool:
+        """Between tasks: wait while paused. False means stop the run."""
+        while not self._running.wait(timeout=self.poll_s):
+            if self.stopped:
+                break
+        return not self.stopped
+
+    def review(self, index, total, inputs, render, title="", flags=None):
+        actions = render(inputs)
+        if self.auto:
+            self.stats["approved"] += 1
+            return Decision("approve"), actions
+        edits: dict = {}
+        self.publish(
+            {
+                "type": "review",
+                "index": index,
+                "total": total,
+                "title": title,
+                "plan": plan_rows(actions, flags),
+            }
+        )
+        while True:
+            msg = self._wait()
+            action = msg.get("action")
+            if action in ("approve", "approve_all"):
+                self.auto = action == "approve_all"
+                break
+            if action == "skip":
+                self.stats["skipped"] += 1
+                return Decision("skip"), actions
+            if action == "quit":
+                return Decision("quit"), actions
+            if action == "edit":
+                unknown = []
+                for name, value in (msg.get("edits") or {}).items():
+                    param = self._resolve(name, inputs)
+                    if param is None:
+                        unknown.append(name)
+                    else:
+                        edits[param] = str(value)
+                actions = render({**inputs, **edits})
+                self.publish(
+                    {
+                        "type": "review",
+                        "index": index,
+                        "total": total,
+                        "title": title,
+                        "plan": plan_rows(actions, flags),
+                        "unknown_fields": unknown,
+                    }
+                )
+                if msg.get("then") == "approve" and not unknown:
+                    break
+        self.stats["approved"] += 1
+        if edits:
+            self.stats["edited"] += 1
+        return Decision("approve", edits), actions
+
+    def confirm_submit(self, action: dict) -> bool:
+        if not self.confirm_submit_enabled:
+            return True
+        self.publish({"type": "confirm_submit", "label": plan_label(action)})
+        ok = self._wait().get("action") in ("approve", "yes")
         if not ok:
             self.stats["declined_submit"] += 1
         return ok

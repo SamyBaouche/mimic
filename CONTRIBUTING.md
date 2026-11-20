@@ -13,14 +13,15 @@ Thanks for helping! Mimic is young, so real-world feedback is the most valuable 
 ## Development setup
 
 ```bash
-uv sync --extra agent
+uv sync                       # add --extra matcher for the PyTorch matcher
 uv run playwright install chromium
-docker compose up -d && uv run python -m mimic.db
+uv run mimic doctor
 uv run pytest -q
 ```
 
-Tests use a separate `mimic_test` database and never touch your learned skills.
-Tests that need a browser or Postgres skip themselves cleanly when unavailable.
+Tests run on a throwaway SQLite file and never touch your learned skills. Storage tests also
+run on a `mimic_test` Postgres database when `DATABASE_URL=postgresql://...` is set
+(`docker compose up -d`). Tests that need a browser skip themselves cleanly when unavailable.
 
 ## Before opening a pull request
 

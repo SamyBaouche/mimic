@@ -1,0 +1,18 @@
+{% extends "expenses_base.html" %}
+{% block content %}
+<section class="card">
+  <h3>Expense reports</h3>
+  <form method="get" action="/expenses">
+    <label for="q">Search</label>
+    <input id="q" name="q" value="{{ q }}" placeholder="Employee or report number">
+  </form>
+  <p id="result-count">{{ rows|length }} result(s){% if q %} for "{{ q }}"{% endif %}</p>
+  <table>
+    <tr><th>Report</th><th>Employee</th><th>Date</th><th>Amount</th><th>Type</th></tr>
+    {% for e in rows %}
+    <tr><td>{{ e.id }}</td><td>{{ e.employee }}</td><td>{{ e.spent_on }}</td>
+        <td>{{ "%.2f"|format(e.amount) }}</td><td>{{ e.kind }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

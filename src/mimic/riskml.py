@@ -26,14 +26,9 @@ MODEL_PATH = Path("models/risk_model.json")
 
 
 def load_from_db() -> list[dict]:
-    from mimic.db import connect
+    from mimic.storage import get_storage
 
-    with connect() as conn:
-        rows = conn.execute(
-            """SELECT run_id, features, success FROM step_logs
-               WHERE features IS NOT NULL AND NOT COALESCE(mitigated, false)"""
-        ).fetchall()
-    return [{"run_id": r[0], "features": r[1], "failed": not r[2]} for r in rows]
+    return get_storage().step_samples()
 
 
 def load_from_reports(folder: Path = Path("reports")) -> list[dict]:
@@ -220,7 +215,7 @@ def _setup(skill_name: str):
 
 def collect(skill_name: str, runs: int, tasks: int, chaos_levels: list[float]) -> None:
     from mimic.run import print_report, run_batch
-    from sandbox.generate_invoices import generate
+    from mimic.sandbox.generate_invoices import generate
 
     skill, url = _setup(skill_name)
     for r in range(runs):
@@ -236,7 +231,7 @@ def collect(skill_name: str, runs: int, tasks: int, chaos_levels: list[float]) -
 def evaluate(skill_name: str, tasks: int, chaos: float, seed: int) -> dict:
     from mimic.risk import RiskModel
     from mimic.run import run_batch
-    from sandbox.generate_invoices import generate
+    from mimic.sandbox.generate_invoices import generate
 
     skill, url = _setup(skill_name)
     model = RiskModel.load()
@@ -290,7 +285,7 @@ def print_evaluation(rows: dict) -> None:
         )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Failure risk model")
     sub = parser.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("collect", help="Run chaos batches to gather telemetry")
@@ -305,7 +300,7 @@ def main() -> None:
     e.add_argument("--tasks", type=int, default=50)
     e.add_argument("--chaos", type=float, default=0.4)
     e.add_argument("--seed", type=int, default=777_000)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.cmd == "collect":
         levels = [float(x) for x in args.chaos.split(",")]

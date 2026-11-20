@@ -18,8 +18,8 @@ from mimic.extract import (
     schema_for,
 )
 from mimic.models import Recording
+from mimic.sandbox.generate_documents import LAYOUTS, generate_documents
 from mimic.skills import draft_skill
-from sandbox.generate_documents import LAYOUTS, generate_documents
 
 FIXTURE = Path(__file__).parent / "fixtures" / "enter_invoice.json"
 CATEGORIES = ["Office supplies", "Software", "Travel", "Utilities"]

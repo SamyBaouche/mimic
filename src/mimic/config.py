@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -6,7 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql://mimic:mimic@localhost:5432/mimic"
+    # Empty = SQLite file in `home`. Or sqlite:///path/to/file.db, or postgresql://... (pgvector)
+    database_url: str = ""
+    mimic_home: Path = Path.home() / ".mimic"  # env: MIMIC_HOME
     ollama_host: str = "http://localhost:11434"
     vision_model: str = "qwen2.5vl:7b"
     planner_model: str = "qwen2.5:7b"

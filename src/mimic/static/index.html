@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mimic</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --window: #09090b;      /* behind everything */
+    --surface: #111113;     /* panels */
+    --raised: #18181b;      /* headers, inputs, buttons */
+    --hover: #222226;
+    --rule: #26262b;
+    --rule-soft: #1c1c20;
+    --ink: #ececef;
+    --ink-2: #8d8d96;
+    --ink-3: #5c5c66;
+    --select: #8ab4ff;      /* the one accent: selection, primary action */
+    --select-bg: rgba(138, 180, 255, .09);
+    --ok: #5fd08a; --fail: #ff6b6b; --wait: #f5b94f;
+    --wait-bg: rgba(245, 185, 79, .08);
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--ink); background: var(--window);
+    display: grid; grid-template-rows: auto auto 1fr 230px auto; grid-template-columns: minmax(0, 1fr);
+    gap: 8px; min-width: 1180px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 1px solid var(--select); outline-offset: 1px; }
+  ::selection { background: rgba(138, 180, 255, .3); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2a2a30; border: 3px solid var(--surface); border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* title + toolbar */
+  .titlebar { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px 0; }
+  .titlebar h1 { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  .titlebar .run-id { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin: 0 8px; padding: 7px 10px;
+             background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; white-space: nowrap;
+             overflow-x: auto; }
+  .toolbar .run-controls { margin-left: auto; display: flex; gap: 6px; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+  .toolbar select, .toolbar input[type=text], .toolbar input[type=number] {
+    height: 28px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 5px;
+    background: var(--raised); color: var(--ink);
+  }
+  .toolbar select:hover, .toolbar input:hover { border-color: #34343a; }
+  .toolbar input::placeholder { color: var(--ink-3); }
+  .toolbar input[type=text] { width: 180px; }
+  .toolbar input[type=number] { width: 58px; }
+  .toolbar input[type=checkbox] { accent-color: var(--select); }
+  .toolbar .sep { width: 1px; height: 18px; background: var(--rule); }
+  .toolbar .check { color: var(--ink); gap: 6px; }
+  .toolbar fieldset { border: 0; padding: 0; display: contents; }
+  .toolbar fieldset:disabled label { color: var(--ink-3); }
+
+  button.b {
+    height: 28px; padding: 0 12px; border: 1px solid #2e2e34; border-radius: 5px;
+    background: var(--raised); cursor: pointer; white-space: nowrap; transition: background .12s, border-color .12s;
+  }
+  button.b:hover:not(:disabled) { background: var(--hover); border-color: #3a3a42; }
+  button.b:active:not(:disabled) { background: #2a2a30; }
+  button.b:disabled { color: var(--ink-3); border-color: var(--rule-soft); background: transparent; cursor: default; }
+  button.b.primary { background: var(--select); border-color: var(--select); color: #0b0d12; font-weight: 600; }
+  button.b.primary:hover:not(:disabled) { background: #a3c4ff; border-color: #a3c4ff; }
+  button.b.primary:disabled { background: rgba(138, 180, 255, .14); border-color: transparent; color: #56607a; }
+  button.b u { text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: currentColor; }
+
+  /* workspace */
+  .workspace { display: grid; grid-template-columns: 1fr 520px; gap: 8px; margin: 0 8px; min-height: 0; }
+  .pane { display: flex; flex-direction: column; min-height: 0; background: var(--surface);
+          border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+               padding: 6px 12px; border-bottom: 1px solid var(--rule); min-height: 34px; }
+  .pane-head h2 { font-size: 13px; font-weight: 600; }
+  .pane-head .aside { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+                      white-space: nowrap; font-family: var(--mono); }
+
+  /* viewport: dotted canvas, the glow around the screen is the run state */
+  .viewport { flex: 1; min-height: 0; position: relative; overflow: hidden;
+              background: radial-gradient(circle, #1f1f24 1px, transparent 1.2px) 0 0 / 18px 18px, #0c0c0e; }
+  .frame { position: absolute; inset: 16px; display: flex; align-items: center; justify-content: center; }
+  .frame img { display: block; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain;
+               border-radius: 6px; border: 1px solid #2c2c32; background: #fff;
+               box-shadow: 0 12px 40px rgba(0, 0, 0, .55); transition: border-color .25s, box-shadow .25s; }
+  .frame.acting img { border-color: var(--select); box-shadow: 0 0 0 1px var(--select), 0 0 28px rgba(138, 180, 255, .22), 0 12px 40px rgba(0, 0, 0, .55); }
+  .frame.waiting img { border-color: var(--wait); box-shadow: 0 0 0 1px var(--wait), 0 0 28px rgba(245, 185, 79, .2), 0 12px 40px rgba(0, 0, 0, .55); }
+  .frame.done img { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 0 28px rgba(95, 208, 138, .18), 0 12px 40px rgba(0, 0, 0, .55); }
+  .empty { color: var(--ink-2); max-width: 44ch; line-height: 1.6; padding: 14px 16px;
+           background: rgba(17, 17, 19, .85); border: 1px solid var(--rule); border-radius: 8px; }
+  .empty strong { color: var(--ink); font-weight: 600; display: block; margin-bottom: 2px; }
+
+  /* plan table */
+  .plan-wrap { flex: 1; overflow: auto; min-height: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--surface); text-align: left; font-weight: 500;
+       color: var(--ink-3); font-size: 12px; padding: 7px 10px; border-bottom: 1px solid var(--rule); }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  td.num { color: var(--ink-3); width: 30px; text-align: right; font-family: var(--mono); font-size: 12px; }
+  td.value { font-family: var(--mono); font-size: 12.5px; word-break: break-word; color: #dcdce2; }
+  td.value input { width: 100%; height: 26px; padding: 0 6px; font-family: var(--mono); font-size: 12.5px;
+                   background: var(--window); border: 1px solid var(--select); border-radius: 4px; }
+  td.result { width: 118px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+  tr.current td { background: var(--select-bg); }
+  tr.current td:first-child { box-shadow: inset 2px 0 0 var(--select); }
+  .ok { color: var(--ok); } .fail { color: var(--fail); } .waitc { color: var(--wait); }
+  .note { display: block; color: var(--wait); font-family: "Segoe UI", system-ui, sans-serif; font-size: 12px; }
+  .placeholder { padding: 16px 12px; color: var(--ink-3); }
+
+  /* approval strip */
+  .decide { border-top: 1px solid var(--rule); padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;
+            background: var(--raised); }
+  .decide .msg { font-size: 12.5px; color: var(--ink-2); min-height: 18px; }
+  .decide .msg.ask { color: var(--ink); background: var(--wait-bg); border: 1px solid rgba(245, 185, 79, .3);
+                     padding: 6px 9px; border-radius: 5px; }
+  .decide .msg.err { color: var(--fail); }
+  .decide .row { display: flex; gap: 6px; }
+  .decide .row .spacer { flex: 1; }
+
+  /* bottom: log + tasks */
+  .bottom { display: flex; flex-direction: column; min-height: 0; margin: 0 8px; background: var(--surface);
+            border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  .tabs { display: flex; border-bottom: 1px solid var(--rule); padding-left: 4px; }
+  .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--ink-2);
+                 border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs button:hover { color: var(--ink); }
+  .tabs button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--select); }
+  .tabs .count { color: var(--ink-3); margin-left: 5px; font-family: var(--mono); font-size: 11.5px; }
+  .tab { flex: 1; overflow: auto; min-height: 0; }
+  #log { font-family: var(--mono); font-size: 12px; padding: 6px 0; }
+  #log div { display: grid; grid-template-columns: 96px 58px 1fr; gap: 12px; padding: 1px 12px; color: #c9c9d0; }
+  #log .t { color: var(--ink-3); } #log .k { color: #7f8db0; }
+  #log .heal { background: var(--wait-bg); color: var(--wait); box-shadow: inset 2px 0 0 var(--wait); }
+  #log .bad { color: var(--fail); }
+  #tasks td { font-size: 12.5px; }
+
+  /* status bar */
+  .statusbar { display: flex; border-top: 1px solid var(--rule); background: var(--surface); font-size: 12px;
+               color: var(--ink-2); }
+  .statusbar > span { padding: 4px 12px; border-right: 1px solid var(--rule); white-space: nowrap; }
+  .statusbar > span:last-child { border-right: 0; margin-left: auto; color: var(--ink-3); }
+  .statusbar b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3);
+         margin-right: 6px; vertical-align: 1px; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(95, 208, 138, .6); }
+  progress { width: 110px; height: 4px; vertical-align: 2px; margin-left: 8px; appearance: none; border: 0;
+             border-radius: 2px; background: #26262b; overflow: hidden; }
+  progress::-webkit-progress-bar { background: #26262b; }
+  progress::-webkit-progress-value { background: var(--select); transition: width .3s; }
+  progress::-moz-progress-bar { background: var(--select); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <h1>Mimic</h1>
+  <span class="run-id" id="run-id"></span>
+</div>
+
+<form class="toolbar" id="start-form" autocomplete="off">
+  <fieldset id="start-fields">
+    <label>Skill <select id="f-skill"><option>Loading...</option></select></label>
+    <label>Inputs
+      <select id="f-source">
+        <option value="data">Data file</option>
+        <option value="docs">Documents folder</option>
+      </select></label>
+    <label><input type="text" id="f-path" placeholder="sandbox/data/invoices.json" aria-label="Path"></label>
+    <span class="sep"></span>
+    <label>Interface <select id="f-layout"><option value="v1">v1</option><option value="v2">v2 (redesign)</option></select></label>
+    <label>Tasks <input type="number" id="f-limit" value="5" min="1" max="500"></label>
+    <span class="sep"></span>
+    <label class="check" title="Show each plan and wait for your approval"><input type="checkbox" id="f-review" checked> Review plans</label>
+    <label class="check" title="Fill the form, then ask before pressing submit"><input type="checkbox" id="f-confirm"> Confirm submits</label>
+    <label class="check" title="Find elements again when the interface changed"><input type="checkbox" id="f-heal" checked> Self-heal</label>
+  </fieldset>
+  <div class="run-controls">
+    <button class="b primary" id="b-start" type="submit">Start run</button>
+    <button class="b" id="b-pause" type="button" disabled><u>P</u>ause</button>
+    <button class="b" id="b-stop" type="button" disabled>Stop</button>
+  </div>
+</form>
+
+<main class="workspace">
+  <section class="pane">
+    <div class="pane-head"><h2>Agent browser</h2><span class="aside" id="url">Not started</span></div>
+    <div class="viewport">
+      <div class="frame" id="frame">
+        <img id="screen" alt="What the agent sees" hidden>
+        <p class="empty" id="idle"><strong>Nothing running</strong>
+          Pick a skill and its inputs in the toolbar, then start a run. The agent's browser shows up here while it works.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="pane">
+    <div class="pane-head"><h2 id="t-title">Plan</h2><span class="aside" id="t-sub"></span></div>
+    <div class="plan-wrap">
+      <table id="plan">
+        <thead><tr><th></th><th>Action</th><th>Field</th><th>Value</th><th>Result</th></tr></thead>
+        <tbody id="steps"><tr><td colspan="5" class="placeholder">The plan for the current task appears here.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="decide">
+      <div class="msg" id="msg">No task waiting for you.</div>
+      <div class="row">
+        <button class="b primary" id="b-approve" disabled><u>A</u>pprove</button>
+        <button class="b" id="b-edit" disabled><u>E</u>dit values</button>
+        <button class="b" id="b-skip" disabled><u>S</u>kip task</button>
+        <span class="spacer"></span>
+        <button class="b" id="b-all" disabled>Approve the rest (<u>T</u>)</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<section class="bottom">
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="log">Event log</button>
+    <button role="tab" aria-selected="false" data-tab="tasks">Tasks<span class="count" id="task-count"></span></button>
+  </div>
+  <div class="tab" id="tab-log"><div id="log"></div></div>
+  <div class="tab" id="tab-tasks" hidden>
+    <table><thead><tr><th>#</th><th>Task</th><th>Status</th><th>Time</th><th>UI repairs</th><th>Note</th></tr></thead>
+      <tbody id="tasks"></tbody></table>
+  </div>
+</section>
+
+<footer class="statusbar">
+  <span><i class="dot" id="conn"></i><span id="conn-text">Connecting</span></span>
+  <span id="live">Idle</span>
+  <span>Tasks <b id="p-done">0</b> of <b id="p-total">0</b><progress id="p-bar" value="0" max="1"></progress></span>
+  <span>Succeeded <b id="s-success">-</b></span>
+  <span>Average <b id="s-avg">-</b> per task</span>
+  <span>UI repairs <b id="s-heal">0</b></span>
+  <span>Runs on this machine, nothing sent to the cloud</span>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+const S = { plan: [], results: {}, current: null, reviewing: false, confirming: false, editing: false,
+            paused: false, running: false, total: 0, finished: 0, repairs: 0, tasks: {} };
+let ws;
+
+/* ---------- connection ---------- */
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => { $("conn").classList.add("on"); $("conn-text").textContent = "Connected"; };
+  ws.onclose = () => {
+    $("conn").classList.remove("on"); $("conn-text").textContent = "Reconnecting";
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = (m) => handle(JSON.parse(m.data));
+}
+const send = (msg) => ws && ws.readyState === 1 && ws.send(JSON.stringify(msg));
+
+/* ---------- rendering ---------- */
+const VERB = { fill: "Type", select: "Select", check: "Tick", choose: "Pick", upload: "Attach",
+               press: "Press", click: "Click" };
+const PAST = { fill: "Typed", select: "Selected", check: "Set", choose: "Picked", upload: "Attached" };
+function setState(state, text) {
+  $("frame").className = "frame " + state;
+  $("live").textContent = text;
+}
+
+function renderPlan() {
+  if (!S.plan.length) return;
+  $("steps").innerHTML = S.plan.map((r) => {
+    const res = S.results[r.index];
+    const isClick = r.action === "click" || r.action === "press";
+    let value = r.action === "click" ? "" : esc(r.value ?? "missing");
+    if (S.editing && !isClick && !r.secret) value = `<input data-param="${esc(r.parameter)}" value="${esc(r.value)}">`;
+    if (r.flag) value += `<span class="note">Check this: ${esc(r.flag)}</span>`;
+    let result = "";
+    if (res) result = !res.success ? `<span class="fail">Failed</span>`
+      : res.strategy === "not needed" ? "Not needed"
+      : `<span class="ok">Done</span> ${res.latency_ms} ms`;
+    else if (S.current === r.index) result = "In progress";
+    return `<tr class="${S.current === r.index ? "current" : ""}">
+      <td class="num">${r.index + 1}</td><td>${VERB[r.action] || r.action}</td>
+      <td>${esc(r.label)}</td><td class="value">${value}</td><td class="result">${result}</td></tr>`;
+  }).join("");
+  const first = document.querySelector("#steps input");
+  if (first) first.focus();
+}
+
+function setButtons() {
+  const r = S.reviewing && !S.editing, c = S.confirming;
+  $("b-approve").disabled = !(S.reviewing || c);
+  $("b-edit").disabled = !S.reviewing || c;
+  $("b-skip").disabled = !(S.reviewing || c);
+  $("b-all").disabled = !r;
+  $("b-pause").disabled = !S.running;
+  $("b-stop").disabled = !S.running;
+  $("b-approve").innerHTML = c ? "Submit <u>a</u>nd continue" : S.editing ? "Save and <u>a</u>pprove" : "<u>A</u>pprove";
+  $("b-edit").innerHTML = S.editing ? "Cancel edit" : "<u>E</u>dit values";
+  $("b-skip").innerHTML = c ? "Don't <u>s</u>ubmit" : "<u>S</u>kip task";
+  $("b-pause").innerHTML = S.paused ? "Resume (<u>P</u>)" : "<u>P</u>ause";
+  $("start-fields").disabled = S.running; $("b-start").disabled = S.running;
+}
+
+function msg(text, kind = "") { $("msg").className = "msg " + kind; $("msg").textContent = text; }
+
+function time(ts) {
+  const d = ts ? new Date(ts * 1000) : new Date();
+  return d.toTimeString().slice(0, 8) + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+function log(e, text, cls = "") {
+  const row = document.createElement("div");
+  if (cls) row.className = cls;
+  row.innerHTML = `<span class="t">${time(e.ts)}</span><span class="k">${e.task ? "task " + e.task : ""}</span><span>${esc(text)}</span>`;
+  const box = $("tab-log"), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+  $("log").append(row);
+  while ($("log").children.length > 800) $("log").firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function taskRow(i, patch) {
+  S.tasks[i] = { ...(S.tasks[i] || { title: "", status: "Waiting", ms: "", repairs: 0, note: "" }), ...patch };
+  $("tasks").innerHTML = Object.entries(S.tasks).map(([n, t]) => {
+    const cls = t.status === "Done" ? "ok" : t.status === "Failed" ? "fail" : t.status === "Skipped" ? "waitc" : "";
+    return `<tr><td class="num">${n}</td><td>${esc(t.title)}</td><td class="${cls}">${t.status}</td>
+      <td>${t.ms ? t.ms + " ms" : ""}</td><td>${t.repairs || ""}</td><td>${esc(t.note)}</td></tr>`;
+  }).join("");
+  $("task-count").textContent = ` ${Object.keys(S.tasks).length}`;
+}
+
+function progress(e) {
+  $("p-done").textContent = S.finished; $("p-total").textContent = S.total;
+  $("p-bar").max = S.total || 1; $("p-bar").value = S.finished;
+  $("s-heal").textContent = S.repairs;
+  if (e && e.done) {
+    $("s-success").textContent = `${e.succeeded} of ${e.done}`;
+    $("s-avg").textContent = `${(e.avg_ms / 1000).toFixed(2)} s`;
+  }
+}
+
+/* ---------- events ---------- */
+function handle(e) {
+  switch (e.type) {
+    case "frame":
+      $("screen").src = "data:image/jpeg;base64," + e.data;
+      $("screen").hidden = false; $("idle").hidden = true;
+      break;
+
+    case "status":
+      S.running = true; setState("acting", "Preparing");
+      log(e, e.message); setButtons();
+      break;
+
+    case "reading":
+      S.running = true; setState("acting", `Reading documents ${e.index} of ${e.total}`);
+      log(e, `Read ${e.name} in ${e.seconds} s` + (e.to_check ? `, ${e.to_check} field(s) to check` : ""));
+      setButtons();
+      break;
+
+    case "run_started":
+      Object.assign(S, { running: true, total: e.total, finished: 0, repairs: 0, tasks: {}, paused: false });
+      $("tasks").innerHTML = ""; $("run-id").textContent = e.run_id;
+      $("url").textContent = `${e.url}?layout=${e.layout}`;
+      $("idle").innerHTML = "<strong>Waiting for the first plan</strong>The agent opens the app once you approve task 1.";
+      $("s-success").textContent = "-"; $("s-avg").textContent = "-";
+      setState("acting", "Running");
+      log(e, `Run started: ${e.skill} on interface ${e.layout}, ${e.total} task(s)`);
+      progress(); setButtons();
+      break;
+
+    case "review":
+      Object.assign(S, { plan: e.plan, results: {}, current: null, reviewing: true, editing: false });
+      $("t-title").textContent = `Task ${e.index} of ${e.total}`;
+      $("t-sub").textContent = e.title;
+      taskRow(e.index, { title: e.title, status: "Waiting for you" });
+      setState("waiting", "Waiting for you");
+      if (e.unknown_fields && e.unknown_fields.length) {
+        msg(`No field named ${e.unknown_fields.join(", ")}. Nothing was changed.`, "err");
+      } else {
+        const flagged = e.plan.filter((r) => r.flag).length;
+        msg(flagged ? `${flagged} value(s) need a look before you approve.` : "Check the values, then approve, edit or skip.", "ask");
+        log({ ...e, task: e.index }, "Waiting for approval");
+      }
+      renderPlan(); setButtons();
+      break;
+
+    case "task_started":
+      Object.assign(S, { plan: e.plan, results: {}, current: e.plan.length ? e.plan[0].index : null,
+                         reviewing: false, editing: false, taskIndex: e.index });
+      $("t-title").textContent = `Task ${e.index} of ${e.total}`; $("t-sub").textContent = e.title;
+      taskRow(e.index, { title: e.title, status: "Running" });
+      setState("acting", "Running"); msg("The agent is working on this task.");
+      log({ ...e, task: e.index }, `Started ${e.title}`);
+      renderPlan(); setButtons();
+      break;
+
+    case "step": {
+      S.results[e.index] = e;
+      const next = S.plan.find((r) => !S.results[r.index]);
+      S.current = next ? next.index : null;
+      const row = S.plan.find((r) => r.index === e.index);
+      const what = e.action === "click" ? `Clicked "${e.label}"`
+        : e.action === "press" ? `Pressed ${row ? row.value : "a key"} in ${e.label}`
+        : `${PAST[e.action] || "Did"} "${row ? row.value : ""}" in ${e.label}`;
+      if (e.success && e.strategy === "not needed") log(e, `Skipped "${e.label}": the app went past that page (already signed in, for example)`);
+      else if (e.success) log(e, `${what} (${e.strategy}, ${e.latency_ms} ms)`);
+      else log(e, `Could not ${e.action} "${e.label}": ${e.error || "element not found"}`, "bad");
+      if (e.healed) {
+        log(e, `Repaired "${e.label}": found it again with the ${e.strategy}` +
+               (e.confidence != null ? ` (confidence ${e.confidence.toFixed(2)})` : "") + ", saved for next tasks", "heal");
+      }
+      renderPlan();
+      break;
+    }
+
+    case "confirm_submit":
+      S.confirming = true; setState("waiting", "Waiting for you");
+      msg(`The form is filled. Press "${e.label}"?`, "ask");
+      log({ ...e, task: S.taskIndex }, `Waiting before "${e.label}"`);
+      setButtons();
+      break;
+
+    case "task_done": {
+      S.finished += 1; S.confirming = false;
+      const repairs = (e.healed || []).length; S.repairs += repairs;
+      const status = e.status === "ok" ? "Done" : e.status === "failed" ? "Failed" : "Skipped";
+      taskRow(e.index, { status, ms: e.ms || "", repairs, note: e.reason || e.error || "" });
+      log({ ...e, task: e.index }, status === "Skipped" ? `Skipped: ${e.reason}` :
+          status === "Done" ? `Done in ${e.ms} ms` : `Failed: ${e.error}`, status === "Failed" ? "bad" : "");
+      progress(e); setButtons();
+      break;
+    }
+
+    case "paused":
+      S.paused = e.paused; setState(e.paused ? "waiting" : "acting", e.paused ? "Paused" : "Running");
+      msg(e.paused ? "Paused. The agent stops after the current task." : "Resumed.");
+      log(e, e.paused ? "Paused" : "Resumed"); setButtons();
+      break;
+
+    case "run_done": {
+      const r = e.report;
+      Object.assign(S, { running: false, reviewing: false, confirming: false, current: null, paused: false });
+      setState("done", "Done");
+      $("s-success").textContent = `${Math.round(r.task_success_rate * 100)}%`;
+      const by = { application: "the application's own records", confirmation: "the confirmation learned from the demo", agent: "the agent's own checks" };
+      msg(`Finished: ${r.executed} executed, ${r.skipped_by_user} skipped. Checked against ${by[r.graded_by] || r.graded_by}.`);
+      log(e, `Run finished, ${Math.round(r.task_success_rate * 100)}% of tasks succeeded`);
+      renderPlan(); setButtons();
+      break;
+    }
+
+    case "error":
+      Object.assign(S, { running: false, reviewing: false, confirming: false });
+      setState("", "Stopped on an error");
+      msg(e.message, "err"); log(e, `Error: ${e.message}`, "bad"); setButtons();
+      break;
+  }
+}
+
+/* ---------- actions ---------- */
+function approve() {
+  if (S.confirming) { S.confirming = false; send({ action: "approve" }); msg("Submitting."); setButtons(); return; }
+  if (!S.reviewing) return;
+  if (S.editing) {
+    const edits = {};
+    document.querySelectorAll("#steps input[data-param]").forEach((i) => { edits[i.dataset.param] = i.value; });
+    S.editing = false; send({ action: "edit", edits, then: "approve" });
+  } else send({ action: "approve" });
+  S.reviewing = false; msg("Approved."); setButtons();
+}
+function edit() { if (!S.reviewing) return; S.editing = !S.editing; renderPlan(); setButtons(); }
+function skip() {
+  if (S.confirming) { S.confirming = false; send({ action: "no" }); setButtons(); return; }
+  if (!S.reviewing) return;
+  S.reviewing = S.editing = false; send({ action: "skip" }); msg("Skipped."); setButtons();
+}
+function approveAll() { if (!S.reviewing || S.editing) return; S.reviewing = false; send({ action: "approve_all" }); msg("Approving every remaining task."); setButtons(); }
+function pause() { if (S.running) send({ action: S.paused ? "resume" : "pause" }); }
+
+$("b-approve").onclick = approve;
+$("b-edit").onclick = edit;
+$("b-skip").onclick = skip;
+$("b-all").onclick = approveAll;
+$("b-pause").onclick = pause;
+$("b-stop").onclick = () => { send({ action: "stop" }); msg("Stopping after the current step."); };
+
+document.addEventListener("keydown", (ev) => {
+  if (S.editing) {
+    if (ev.key === "Enter") { ev.preventDefault(); approve(); }
+    if (ev.key === "Escape") edit();
+    return;
+  }
+  if (ev.target.closest("input, select, textarea") || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  if (k === "a") approve(); else if (k === "e") edit(); else if (k === "s") skip();
+  else if (k === "t") approveAll(); else if (k === "p") pause();
+});
+
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
+  $("tab-log").hidden = b.dataset.tab !== "log"; $("tab-tasks").hidden = b.dataset.tab !== "tasks";
+  if (b.dataset.tab === "log") $("tab-log").scrollTop = $("tab-log").scrollHeight;
+});
+
+$("f-source").onchange = () => {
+  $("f-path").placeholder = $("f-source").value === "docs" ? "sandbox/data/documents" : "sandbox/data/invoices.json";
+};
+$("start-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const body = {
+    skill: $("f-skill").value, source: $("f-source").value, path: $("f-path").value || null,
+    layout: $("f-layout").value, limit: Number($("f-limit").value) || 5,
+    review: $("f-review").checked, confirm_submit: $("f-confirm").checked, heal: $("f-heal").checked,
+  };
+  $("log").innerHTML = "";
+  const r = await fetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) msg(`Could not start: ${(await r.json()).detail}`, "err");
+};
+
+async function loadSkills() {
+  try {
+    const r = await fetch("/api/skills");
+    if (!r.ok) throw new Error((await r.json()).detail);
+    const skills = await r.json();
+    $("f-skill").innerHTML = skills.length
+      ? skills.map((s) => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("")
+      : "<option value=''>No skills yet</option>";
+    if (!skills.length) msg("No skills learned yet. Record one with mimic.recorder, then mimic.learn.");
+  } catch (err) {
+    $("f-skill").innerHTML = "<option value=''>Unavailable</option>";
+    msg(`Can't load skills: ${err.message}. Is the database running (docker compose up -d)?`, "err");
+  }
+}
+loadSkills(); connect(); setButtons();
+</script>
+</body>
+</html>

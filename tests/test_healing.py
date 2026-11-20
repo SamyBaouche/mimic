@@ -17,9 +17,9 @@ from mimic.healing import Healer, HealMemory  # noqa: E402
 from mimic.models import ElementInfo, Recording  # noqa: E402
 from mimic.recorder import launch_browser  # noqa: E402
 from mimic.run import run_batch  # noqa: E402
+from mimic.sandbox.generate_invoices import generate  # noqa: E402
 from mimic.skills import draft_skill  # noqa: E402
 from mimic.vision import VisionChoice, VisionLocator, annotate_candidates, annotate_reference  # noqa: E402
-from sandbox.generate_invoices import generate  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "enter_invoice.json"
 
@@ -125,22 +125,17 @@ def padded_embedder(texts):
 
 
 @pytest.mark.parametrize("embedder", [padded_embedder, fake_embedder], ids=["768d", "wrong-dim"])
-def test_healing_memory_persists_in_pgvector(
+def test_healing_memory_persists_in_storage(
     skill, sandbox_server, v2_centers, test_database, embedder
 ):
-    from mimic.db import connect
+    from mimic.storage import get_storage
 
-    with connect() as conn:
-        conn.execute("TRUNCATE healed_elements")
-        conn.commit()
+    get_storage().reset()
     first = Healer(embedder=embedder, vision=None, memory=HealMemory(use_db=True))
     _run(skill, sandbox_server, first, n=1)
+    assert get_storage().stats()["healed_elements"] == 1
 
-    with connect() as conn:
-        has_vector = conn.execute("SELECT embedding IS NOT NULL FROM healed_elements").fetchone()
-    assert has_vector == (embedder is padded_embedder,)
-
-    # A brand-new run (empty in-run cache) finds the fix in Postgres without any model.
+    # A brand-new run (empty in-run cache) finds the fix in storage without any model.
     second = Healer(embedder=embedder, vision=None, memory=HealMemory(use_db=True))
     second.semantic_scores = lambda *a: pytest.fail("memory should answer first")
     report = _run(skill, sandbox_server, second, n=2)

@@ -11,22 +11,31 @@ Two passes:
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel
 
 from mimic.models import ElementInfo, Recording
+from mimic.outcome import SuccessSignal, learn_signal
+
+ACTIONS = ("fill", "select", "check", "choose", "upload", "press", "click")
+VALUE_ACTIONS = ("fill", "select", "check", "choose", "upload")  # value can vary per task
 
 
 class SkillStep(BaseModel):
     index: int
-    action: Literal["fill", "select", "click"]
+    action: Literal["fill", "select", "check", "choose", "upload", "press", "click"]
     element: ElementInfo
     parameter: str | None = None  # value comes from the task input
     value: str | None = None  # constant value (or the example from the demo)
     screenshot: str | None = None
+    secret: bool = False  # password-like: never stored, given at run time (see secret_env)
+    navigates: bool = False  # in the demo, this click / key press led to another page
+    page: str | None = None  # URL path the step happened on in the demo
 
 
 class Skill(BaseModel):
@@ -37,16 +46,29 @@ class Skill(BaseModel):
     source_recording: str | None = None
     start_url: str | None = None
     refined_by: Literal["heuristic", "llm"] = "heuristic"
+    success: SuccessSignal | None = None  # what the end of a successful task looks like
+
+    @property
+    def secrets(self) -> list[str]:
+        return [s.parameter for s in self.steps if s.secret and s.parameter]
 
     def render(self, inputs: dict) -> list[dict]:
-        """Resolve parameters into concrete actions for one task (e.g. one invoice)."""
-        missing = [p for p in self.parameters if p not in inputs]
+        """Resolve parameters into concrete actions for one task (e.g. one invoice).
+
+        Secret parameters come from the inputs if present, else from the environment
+        variable MIMIC_SECRET_<NAME> (e.g. MIMIC_SECRET_PASSWORD). They are never stored.
+        """
+        secrets = set(self.secrets)
+        missing = [p for p in self.parameters if p not in inputs and p not in secrets]
         if missing:
             raise KeyError(f"Missing inputs for skill '{self.name}': {missing}")
         demo_dir = Path(self.source_recording).parent if self.source_recording else None
         actions = []
         for step in self.steps:
-            if step.parameter:
+            if step.secret:
+                raw = inputs.get(step.parameter) or os.environ.get(secret_env(step.parameter))
+                value = None if raw is None else str(raw)
+            elif step.parameter:
                 raw = inputs[step.parameter]
                 value = None if raw is None else str(raw)
             else:
@@ -60,6 +82,9 @@ class Skill(BaseModel):
                     "element": step.element,
                     "value": value,
                     "screenshot": shot,
+                    "secret": step.secret,
+                    "navigates": step.navigates,
+                    "page": step.page,
                 }
             )
         return actions
@@ -67,6 +92,10 @@ class Skill(BaseModel):
     def embedding_text(self) -> str:
         fields = ", ".join(s.element.label or s.element.text or "" for s in self.steps)
         return f"{self.name.replace('_', ' ')}: {self.description}. Steps on: {fields}"
+
+
+def secret_env(parameter: str) -> str:
+    return f"MIMIC_SECRET_{parameter.upper()}"
 
 
 # ---------- Pass 1: deterministic draft ----------
@@ -83,19 +112,34 @@ def _collapse(events):
     """Keep only the last value when the user edits the same field several times in a row."""
     out = []
     for e in events:
-        if out and e.kind != "click" and out[-1].kind == e.kind:
-            if out[-1].element.selector == e.element.selector:
+        if out and e.kind not in ("click", "press") and out[-1].kind == e.kind:
+            same = out[-1].element.selector == e.element.selector
+            if e.kind == "choose":  # another option of the same radio group
+                same = bool(e.element.name) and out[-1].element.name == e.element.name
+            if same:
                 out[-1] = e
                 continue
         out.append(e)
     return out
 
 
+def _same_page(a: str, b: str) -> bool:
+    return a.split("#")[0] == b.split("#")[0]
+
+
 def draft_skill(recording: Recording, source: str | None = None) -> Skill:
     steps, params = [], []
-    for i, event in enumerate(_collapse(recording.events)):
+    events = _collapse(recording.events)
+    final_url = recording.outcome.url if recording.outcome else None
+    for i, event in enumerate(events):
+        next_url = events[i + 1].url if i + 1 < len(events) else final_url
+        navigates = (
+            event.kind in ("click", "press")
+            and next_url is not None
+            and not _same_page(event.url, next_url)
+        )
         param = None
-        if event.kind in ("fill", "select"):
+        if event.kind in VALUE_ACTIONS:
             el = event.element
             base = _slug(el.name or el.id or el.label or f"field_{i}")
             param, n = base, 2
@@ -108,12 +152,17 @@ def draft_skill(recording: Recording, source: str | None = None) -> Skill:
                 action=event.kind,
                 element=event.element,
                 parameter=param,
-                value=event.value,
+                value=None if event.secret else event.value,
                 screenshot=event.screenshot,
+                secret=event.secret,
+                navigates=navigates,
+                page=urlsplit(event.url).path or "/",
             )
         )
+    demo_values = [e.value for e in events if e.value and not e.secret]
     return Skill(
         name=recording.name,
+        success=learn_signal(recording.outcome, recording.start_url, demo_values),
         description=f"Replay of the '{recording.name}' demonstration.",
         parameters=params,
         steps=steps,
@@ -159,7 +208,7 @@ def _describe_for_llm(skill: Skill) -> str:
         "Steps that enter a value (answer for exactly these indexes):",
     ]
     for s in skill.steps:
-        if s.action == "click":
+        if s.action not in VALUE_ACTIONS or s.secret:
             continue
         el = s.element
         target = el.label or el.text or el.name or el.selector
@@ -172,7 +221,7 @@ def _describe_for_llm(skill: Skill) -> str:
 
 def apply_refinement(draft: Skill, answer: dict) -> Skill:
     """Validate the LLM answer and merge it into the draft. Raises ValueError if invalid."""
-    value_steps = {s.index for s in draft.steps if s.action != "click"}
+    value_steps = {s.index for s in draft.steps if s.action in VALUE_ACTIONS and not s.secret}
     # Models sometimes also answer for click steps: ignore anything that is not a value step.
     proposed = {
         s["index"]: s["parameter"] for s in answer.get("steps", []) if s["index"] in value_steps
@@ -183,6 +232,8 @@ def apply_refinement(draft: Skill, answer: dict) -> Skill:
     names = [p for p in proposed.values() if p]
     if len(names) != len(set(names)) or not all(_IDENT.match(p) for p in names):
         raise ValueError(f"Invalid parameter names: {names}")
+    if set(names) & set(draft.secrets):
+        raise ValueError(f"Parameter names clash with secret fields: {names}")
 
     description = (answer.get("description") or "").strip()
     if not description:
@@ -195,7 +246,7 @@ def apply_refinement(draft: Skill, answer: dict) -> Skill:
     return draft.model_copy(
         update={
             "description": description,
-            "parameters": names,
+            "parameters": [s.parameter for s in steps if s.parameter],
             "steps": steps,
             "refined_by": "llm",
         }

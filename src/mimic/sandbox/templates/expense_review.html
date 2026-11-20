@@ -1,0 +1,16 @@
+{% extends "expenses_base.html" %}
+{% block content %}
+<form class="card" method="post" action="/expenses/submit">
+  <h3>Review your expense report</h3>
+  <dl>
+    <dt>Employee</dt><dd>{{ d.employee }}</dd>
+    <dt>Date</dt><dd>{{ d.spent_on }}</dd>
+    <dt>Amount</dt><dd>{{ "%.2f"|format(d.amount) }}</dd>
+    <dt>Type</dt><dd>{{ d.kind }}</dd>
+    <dt>Billable</dt><dd>{{ "Yes" if d.billable else "No" }}</dd>
+    <dt>Receipt</dt><dd>{{ d.receipt or "none" }}</dd>
+  </dl>
+  <input type="hidden" name="draft" value="{{ draft }}">
+  <button id="confirm" class="primary" type="submit">Confirm and submit</button>
+</form>
+{% endblock %}
