@@ -2,7 +2,17 @@
 
 All notable changes to Mimic. Versions follow [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [1.0.0] - 2026-11-21
+
+The first complete version: learn a task from one demo, run it on spreadsheets or documents,
+chain skills across apps, approve everything from a live dashboard, and track every model
+with MLflow. Every number in the README comes from a measured run; the failure-risk results
+were measured again for this release.
+
+### Changed
+- Failure-risk model retrained on 1 938 steps (12 runs) and tested again on 50 flaky tasks:
+  83% fewer failed actions than no mitigation, 58% faster than fixing every step, 90% of
+  tasks done (96% when every step is fixed). The README shows these numbers, not the old ones.
 
 ### Added
 - MLflow tracking and model registry (`pip install "mimic-agent[mlflow]"`): `mimic risk train`,

@@ -1,6 +1,6 @@
 [project]
 name = "mimic-agent"
-version = "0.3.0"
+version = "1.0.0"
 description = "A local AI agent that learns a web task from one demonstration, repeats it, and repairs itself when the interface changes."
 readme = "README.md"
 license = "MIT"
@@ -9,7 +9,7 @@ authors = [{ name = "Samy Baouche" }]
 requires-python = ">=3.11"
 keywords = ["agent", "automation", "computer-use", "playwright", "ollama", "rpa", "llm"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",

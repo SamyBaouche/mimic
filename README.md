@@ -15,10 +15,10 @@ repairs itself when the interface changes, and asks you before it acts.**
 [![Ollama](https://img.shields.io/badge/Models-100%25%20local-000000?logo=ollama&logoColor=white)](#quickstart)
 [![Memory](https://img.shields.io/badge/Memory-SQLite%20%7C%20pgvector-4169E1?logo=postgresql&logoColor=white)](#how-it-works)
 [![XGBoost](https://img.shields.io/badge/ML-XGBoost-EB6E00)](#predicting-failures)
+[![MLflow](https://img.shields.io/badge/Tracking-MLflow-0194E2?logo=mlflow&logoColor=white)](#experiments-and-model-versions-mlflow)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/SamyBaouche/mimic/blob/main/LICENSE)
 
-<!-- Demo GIF goes here once recorded:
-<img src="docs/demo.gif" alt="Mimic demo: replays a task, survives a redesign" width="820"/> -->
+<img src="https://raw.githubusercontent.com/SamyBaouche/mimic/main/docs/demo.gif" alt="Mimic dashboard: supplier emails processed across three apps, each plan approved first" width="820"/>
 
 [Results](#results) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Roadmap](#roadmap)
 
@@ -49,11 +49,12 @@ repairs itself when the interface changes, and asks you before it acts.**
 | **Real app it was not built for** (stock Django admin, 30 rows from Excel) | — | **30/30** saved correctly, **0.44 s** per row |
 | After a UI redesign | **0%** | **100%** |
 | Cost of a repair | — | **8.4 s** with vision → **7.7 ms** with the fine-tuned matcher |
+| **Cross-app workflow** (5 supplier emails: invoice PDF → ledger → approval above 2 500 $ → reply), 7B | — | **5/5** emails done in 3 apps, approved from the dashboard |
 | Reading invoice PDFs (50 docs, 3 layouts), 7B models | 76% of fields right | **99.2%** of fields right, **100%** of errors flagged |
 | Same with the light 3B models (laptops without a GPU) | 6% of documents right | **98.4%** of fields right, **100%** of errors flagged |
 | **Real scanned receipts** (ICDAR 2019 SROIE, 50 receipts, 7B) | 95.3% of fields right | **97.3%** of fields right (store, date, total) |
-| Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
-| Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
+| Flaky pages (cookie banners, slow buttons, errors), 50 tasks | 29 failed actions, 42% of tasks done | **5** failed actions (**−83%**), **90%** of tasks done |
+| Speed vs. always fixing the page | 3.2 s / task | **1.3 s** / task (**58% faster**), fixing 11% as many steps |
 
 ## How it works
 
@@ -96,7 +97,9 @@ When the redesign renames **Save invoice** to **Record** and moves it next to tw
 
 Real pages are flaky. Before each action Mimic checks the element (covered? disabled? on screen?
 found how, with what confidence?) and an **XGBoost** model predicts the chance of failure.
-Fixing the page costs time, so Mimic only does it when the risk is high: **9% of steps**.
+Fixing the page costs time, so Mimic only does it when the risk is high: **33 of the 300 steps**
+that fixing everything would touch. The trade-off, measured on the same 50 flaky tasks: fixing
+every step succeeds a little more often (96% vs 90%) but is 2.4× slower (3.2 s vs 1.3 s per task).
 
 <details>
 <summary><b>How the model was evaluated (click to expand)</b></summary>
@@ -107,16 +110,20 @@ Fixing the page costs time, so Mimic only does it when the risk is high: **9% of
   task; an unnecessary fix costs ~0.4 s.
 - **Fair A/B test:** the three policies (never / always / predicted) replay the exact same
   seeded perturbations.
-- **Honest baselines:** compared with logistic regression and hand-written rules. On today's
-  data they are close (logistic regression is slightly ahead). XGBoost is kept because it
-  learns feature interactions without hand-coding them; the comparison reruns on every training.
+- **Honest baselines:** compared with logistic regression and hand-written rules on every
+  training. On today's data (1 938 steps from 12 runs, 8.6% failures) XGBoost and logistic
+  regression rank risk equally well (PR AUC 0.70 vs 0.71); logistic regression has the better F1,
+  and the rule "click on a blocked element" the best F1 but a much weaker ranking (PR AUC 0.37).
+  XGBoost stays the default because it learns feature interactions without hand-coding them;
+  every training and A/B test is tracked in MLflow, so changing that is a measured decision.
 
-| Model (test set) | ROC AUC | PR AUC | F1 |
+| Model (test set: 390 steps) | ROC AUC | PR AUC | F1 |
 |:--|:--:|:--:|:--:|
-| XGBoost | 0.98 | 0.84 | 0.72 |
-| Logistic regression | 0.99 | 0.88 | 0.79 |
-| Rule: click on covered/disabled | 0.91 | 0.68 | 0.82 |
-| Always predict failure | 0.50 | 0.07 | 0.13 |
+| XGBoost | 0.97 | 0.70 | 0.47 |
+| Logistic regression | 0.97 | 0.71 | 0.54 |
+| Rule: click on a blocked element | 0.71 | 0.37 | 0.55 |
+| Rule: covered or disabled | 0.65 | 0.12 | 0.27 |
+| Always predict failure | 0.50 | 0.07 | 0.12 |
 
 </details>
 
@@ -218,7 +225,7 @@ In the dashboard, each email's plan is shown skill by skill: the values read fro
 attachment (uncertain ones flagged), the skills a rule skips and why. Approve, skip or approve
 the rest, then watch every skill run in the agent browser.
 
-<img src="docs/dashboard-workflow.png" alt="Dashboard: one email's plan, skill by skill, waiting for approval" width="820"/>
+<img src="https://raw.githubusercontent.com/SamyBaouche/mimic/main/docs/dashboard-workflow.png" alt="Dashboard: one email's plan, skill by skill, waiting for approval" width="820"/>
 
 ### Distilling vision into a small model
 
@@ -411,6 +418,7 @@ A small accounts-payable app used to train and grade the agent.
 - [x] WorkSuite: mailbox + approvals apps, workflows across apps with plain-words conditions
 - [x] Workflows in the dashboard: start one, approve each email's plan, watch every skill run
 - [x] MLflow: every training and benchmark tracked, models versioned, `production` alias loaded
+- [x] v1.0: one install, every result above measured and reproducible
 - [ ] Learn from a screen-recording video
 - [ ] Browser extension to record in one click
 
