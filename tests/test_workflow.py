@@ -258,3 +258,70 @@ def test_a_failed_step_stops_that_email_only(suite, sandbox_server, tmp_path):
     first = report["results"][0]
     assert first["steps"][0] == {**first["steps"][0], "skill": "enter_invoice", "status": "done"}
     assert first["error"].startswith("reply_to_supplier:")
+
+
+def test_missing_skills_say_how_to_learn_them():
+    from mimic.workflow import learn_hint
+
+    hint = learn_hint(["request_approval", "custom"])
+    assert "mimic record request_approval --url http://localhost:8001/approvals/new" in hint
+    assert "mimic learn recordings/request_approval/recording.json" in hint
+    assert "mimic record custom --url <the app's URL>" in hint
+
+
+def test_lint_finds_inputs_and_fields_that_do_not_exist(tmp_path):
+    from mimic.skills import Skill
+    from mimic.workflow import lint_workflow
+
+    def skill(name, params):  # lint only looks at the inputs
+        return Skill(name=name, description="", parameters=params, steps=[])
+
+    path = tmp_path / "wf.yml"
+    path.write_text(
+        textwrap.dedent("""
+name: t
+for_each: {emails: inbox}
+steps:
+  - read: attachment
+    fields_of: enter_invoice
+    as: invoice
+  - run: enter_invoice
+  - run: reply_to_supplier
+    url: /mail/{email.id}/reply
+    with:
+      message: "Invoice {invoice.invoice_number}, {invoice.total} $ ({row.note})"
+""")
+    )
+    wf = load_workflow(path)
+    skills = {
+        "enter_invoice": skill("enter_invoice", ["invoice_number", "total_amount"]),
+        "reply_to_supplier": skill("reply_to_supplier", ["message_text"]),
+    }
+    problems = lint_workflow(wf, skills)
+    assert len(problems) == 2
+    assert "no input 'message'" in problems[0]
+    assert "--rename message_text=message" in problems[0]
+    assert "{invoice.total}" in problems[1] and "{invoice.total_amount}" in problems[1]
+    skills["reply_to_supplier"] = skill("reply_to_supplier", ["message"])
+    skills["enter_invoice"] = skill("enter_invoice", ["invoice_number", "total"])
+    assert lint_workflow(wf, skills) == []
+
+
+def test_a_skill_without_start_url_starts_on_the_sandbox():
+    from mimic.config import get_settings
+    from mimic.skills import Skill
+    from mimic.workflow import start_url
+
+    old = Skill(name="old", description="", parameters=[], steps=[])  # learned before 0.3
+    assert start_url(old) == get_settings().sandbox_url
+    assert start_url(old.model_copy(update={"start_url": "http://app/x"})) == "http://app/x"
+
+
+def test_a_workflow_stops_early_when_its_app_is_not_running():
+    from mimic.skills import Skill
+    from mimic.workflow import check_apps_answer
+
+    down = Skill(name="x", description="", parameters=[], steps=[],
+                 start_url="http://127.0.0.1:9/form")  # fmt: skip
+    with pytest.raises(SystemExit, match="Nothing answers at http://127.0.0.1:9/"):
+        check_apps_answer({"x": down})

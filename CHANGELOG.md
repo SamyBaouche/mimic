@@ -5,6 +5,10 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
 ## [Unreleased]
 
 ### Added
+- Workflows in the dashboard: choose "Run: Workflow" to start any workflow file found in the
+  current folder, `workflows/` or `examples/`. Each email's plan is shown skill by skill (values
+  read, flags, skills skipped by a rule and why); approve, skip, approve the rest, pause or stop
+  from the page, and every skill's steps are streamed live. `GET /api/workflows` lists them.
 - `mimic extract receipts --n N`: benchmark on real scanned receipts (ICDAR 2019 SROIE,
   downloaded at run time), scoring store name, date and total, with every mistake in a CSV.
   On 50 receipts with 7B models: 95.3% of fields right before this release, 97.3% after.
@@ -27,6 +31,23 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
   (96% of documents), 3B models 98.4% (92%, up from 6%), every error flagged in both cases.
 
 ### Fixed
+- A workflow whose app is not running now stops at once with "Nothing answers at …, start the
+  app first", instead of failing on every email; the dashboard shows the run's notes (rules,
+  dropdown choices that could not be read).
+- Workflows with a skill learned before 0.3 (no start address saved) stopped on "Cannot
+  navigate to invalid URL"; they now start on the sandbox, like `mimic run`. The dropdown
+  choices of such skills are read from the live app, so a document's text is matched to a real
+  choice instead of being typed as free text.
+- `mimic workflow check` (and starting a workflow from the dashboard) now refuses a workflow
+  whose `with:` gives an input the skill does not have, or uses a `{field}` nothing provides,
+  and says how to fix it (`mimic skills edit SKILL --rename OLD=NEW`, or the closest field).
+  Before, every email failed at run time.
+- `mimic record` says to start the app first instead of a long traceback when nothing answers.
+- A one-character demo value (for example "X") was kept as literal text in the learned
+  confirmation, so a replay whose value was different failed its check. Short demo values now
+  match any word in their place.
+- The dashboard showed step results against the wrong row when a skill's steps were not
+  numbered from 0.
 - An identifier read with a missing digit passed the PDF text check because it was part of a
   longer printed number; the check now needs the whole word.
 - `mimic doctor` says when VISION_MODEL / PLANNER_MODEL in .env override the chosen profile.

@@ -119,6 +119,41 @@ def known_fields(wf: Workflow, skills: dict[str, Skill], row_fields: list[str]) 
     return known
 
 
+def lint_workflow(wf: Workflow, skills: dict[str, Skill]) -> list[str]:
+    """What would make every item fail, found before anything runs: an input a skill does not
+    have, or a {field} nothing provides. (row.* fields are only known once the file is read.)"""
+    import difflib
+
+    known = known_fields(wf, skills, [])
+    problems = []
+    for step in wf.steps:
+        if not isinstance(step, RunStep):
+            continue
+        params = skills[step.run].parameters
+        for key in step.with_:
+            if key in params:
+                continue
+            close = difflib.get_close_matches(key, params, n=1, cutoff=0.0)
+            fix = (
+                f" Rename it: mimic skills edit {step.run} --rename {close[0]}={key}"
+                if close
+                else ""
+            )
+            problems.append(
+                f"{step.run} has no input '{key}' (its inputs: {', '.join(params) or 'none'}).{fix}"
+            )
+        for template in [*step.with_.values(), step.url or ""]:
+            for ref in TEMPLATE.findall(template):
+                if ref.startswith("row.") or ref in known:
+                    continue
+                prefix = ref.split(".", 1)[0]
+                same = sorted(k for k in known if k.startswith(prefix + "."))
+                close = difflib.get_close_matches(ref, same, n=1, cutoff=0.0)
+                hint = f" Did you mean {{{close[0]}}}?" if close else ""
+                problems.append(f"{step.run}: nothing provides {{{ref}}}.{hint}")
+    return problems
+
+
 def find_inputs(skill: Skill, step: RunStep, context: dict) -> tuple[dict, list[str], list[str]]:
     """Inputs for one skill: `with:` first, then the same name in what was read, then the row,
     then the demo's own value. Returns (inputs, taken_from_demo, missing)."""
@@ -192,7 +227,7 @@ def plan_item(item: Item, wf: Workflow, skills: dict[str, Skill], rules: dict) -
         if missing:
             item.error = f"{step.run}: no value for {', '.join(missing)}"
             return
-        base = skill.start_url or ""
+        base = start_url(skill)
         url = urljoin(base, fill(step.url, item.context)) if step.url else base
         why = f"{', '.join(from_demo)} from the demo" if from_demo else ""
         if step.if_:
@@ -231,7 +266,7 @@ class ConsoleReview:
     def __init__(self, input_fn=input, print_fn=print, auto: bool = False):
         self.input, self.print, self.auto = input_fn, print_fn, auto
 
-    def __call__(self, text: str) -> str:
+    def __call__(self, text: str, **_) -> str:
         self.print(text)
         if self.auto:
             return "approve"
@@ -275,7 +310,58 @@ def compile_rules(wf: Workflow, known: set[str], client=None, model=None, log=pr
     return rules
 
 
-def read_documents(item: Item, wf: Workflow, skills: dict[str, Skill], extractor) -> None:
+def start_url(skill: Skill) -> str:
+    """Where a skill starts. Skills learned before 0.3 did not store it: the sandbox, as in
+    `mimic run`."""
+    from mimic.config import get_settings
+
+    return skill.start_url or get_settings().sandbox_url
+
+
+def check_apps_answer(skills: dict[str, Skill]) -> None:
+    """Before reading any email: every app the skills start in must answer, or nothing can run."""
+    from urllib.parse import urlsplit
+
+    import httpx
+
+    for base in sorted({f"{urlsplit(u).scheme}://{urlsplit(u).netloc}/"
+                        for u in map(start_url, skills.values())}):  # fmt: skip
+        try:
+            httpx.get(base, timeout=5, follow_redirects=True)
+        except httpx.HTTPError:
+            raise SystemExit(
+                f"Nothing answers at {base}. Start the app first and keep it running in another "
+                "terminal (for the demo apps: mimic sandbox)."
+            ) from None
+
+
+def dropdown_choices(wf: Workflow, skills: dict[str, Skill], log=print) -> dict[str, dict]:
+    """The allowed values of each dropdown the read steps fill, so a document's text is matched
+    to a real choice. Kept in the skill since 0.3; for older skills, read from the live app."""
+    from mimic.extract import default_options
+
+    out = {}
+    for step in wf.steps:
+        if not isinstance(step, ReadStep) or step.fields_of in out:
+            continue
+        skill = skills[step.fields_of]
+        options = default_options(skill)
+        missing = [s.parameter for s in skill.steps if s.action == "select" and s.parameter
+                   and s.parameter not in options]  # fmt: skip
+        if missing:
+            try:
+                from mimic.run import collect_options
+
+                options = collect_options(skill, start_url(skill)) | options
+            except Exception as exc:  # noqa: BLE001 - app not running
+                log(f"  ! Could not read the choices of {', '.join(missing)} from the app "
+                    f"({type(exc).__name__}): they will be read as free text.")  # fmt: skip
+        out[step.fields_of] = options
+    return out
+
+
+def read_documents(item: Item, wf: Workflow, skills: dict[str, Skill], extractor,
+                   choices: dict | None = None) -> None:  # fmt: skip
     from mimic.extract import LOW_CONFIDENCE, default_options, field_specs
 
     if item.error is not None:
@@ -293,7 +379,8 @@ def read_documents(item: Item, wf: Workflow, skills: dict[str, Skill], extractor
             item.error = f"no file to read ({source})"
             return
         skill = skills[step.fields_of]
-        ex = extractor.extract(path, field_specs(skill, default_options(skill)))
+        options = (choices or {}).get(step.fields_of) or default_options(skill)
+        ex = extractor.extract(path, field_specs(skill, options))
         item.context[step.as_] = {**ex.inputs(), "file": str(path)}
         for name, got in ex.fields.items():
             if got.value is None:
@@ -313,6 +400,7 @@ def run_workflow(
     show: bool = False,
     limit: int | None = None,
     log=print,
+    emit=None,
 ) -> dict:
     from playwright.sync_api import sync_playwright
 
@@ -322,7 +410,9 @@ def run_workflow(
     from mimic.run import check_secrets
 
     review = review or ConsoleReview(auto=True)
+    emit = emit or (lambda event: None)
     t0 = time.monotonic()
+    check_apps_answer({st.run: skills[st.run] for st in wf.steps if isinstance(st, RunStep)})
     with tempfile.TemporaryDirectory() as tmp:
         items = load_items(wf, Path(tmp), limit)
         row_fields = list(items[0].context.get("row", {})) if items else []
@@ -333,35 +423,83 @@ def run_workflow(
         if any(isinstance(s, ReadStep) for s in wf.steps) and extractor is None:
             raise ValueError("this workflow reads documents: an extractor (vision model) is needed")
 
+        choices = dropdown_choices(wf, skills, log)
         results = []
+        first = next(skills[st.run] for st in wf.steps if isinstance(st, RunStep))
+        emit(
+            {
+                "type": "run_started",
+                "run_id": wf.name,
+                "skill": wf.name,
+                "workflow": True,
+                "total": len(items),
+                "layout": "",
+                "url": start_url(first),
+            }
+        )
         with sync_playwright() as p:
             browser = launch_browser(p, headless=not show)
             page = browser.new_context().new_page()
+            live = None
+            if getattr(emit, "wants_frames", False):
+                from mimic.live import Screencast
+
+                live = Screencast(page, emit).start()
             for n, item in enumerate(items, 1):
-                read_documents(item, wf, skills, extractor)
+                checkpoint = getattr(review, "checkpoint", None)
+                if checkpoint is not None and not checkpoint():
+                    break
+                read_documents(item, wf, skills, extractor, choices)
                 if item.error is None:
                     plan_item(item, wf, skills, rules)
-                decision = review(format_item(n, len(items), item))
+                decision = review(
+                    format_item(n, len(items), item), item=item, index=n, total=len(items)
+                )
                 if decision == "quit":
                     break
-                results.append(
-                    _execute(
-                        item,
-                        decision,
-                        page,
-                        skills,
-                        healer,
-                        ReplayAgent,
-                        check_signal,
-                        log,
-                        n,
-                        len(items),
-                    )
+                emit(
+                    {
+                        "type": "item_started",
+                        "index": n,
+                        "total": len(items),
+                        "title": item.title,
+                        "steps": plan_groups(item),
+                    }
                 )
+                result = _execute(
+                    item,
+                    decision,
+                    page,
+                    skills,
+                    healer,
+                    ReplayAgent,
+                    check_signal,
+                    log,
+                    n,
+                    len(items),
+                    emit,
+                )
+                results.append(result)
+                done = sum(r["status"] == "done" for r in results)
+                emit(
+                    {
+                        "type": "item_done",
+                        "index": n,
+                        "status": result["status"],
+                        "error": result.get("error"),
+                        "title": item.title,
+                        "steps": result["steps"],
+                        "done": len(results),
+                        "succeeded": done,
+                    }
+                )
+            if live is not None:
+                page.wait_for_timeout(500)
+                live.stop()
             browser.close()
 
     done = sum(r["status"] == "done" for r in results)
-    return {
+    report = {
         "run_id": f"{wf.name}-{uuid.uuid4().hex[:8]}",
         "workflow": wf.name,
         "items": len(items),
@@ -373,9 +511,47 @@ def run_workflow(
         "total_s": round(time.monotonic() - t0, 1),
         "results": results,
     }
+    emit({"type": "run_done", "report": {k: v for k, v in report.items() if k != "results"}})
+    return report
 
 
-def _execute(item, decision, page, skills, healer, agent_cls, check_signal, log, n, total):
+# Where each skill of the example workflow is demonstrated in the sandbox (mimic sandbox).
+SANDBOX_DEMOS = {
+    "enter_invoice": "http://localhost:8001",
+    "request_approval": "http://localhost:8001/approvals/new",
+    "reply_to_supplier": "http://localhost:8001/mail/mail-0001/reply",
+}
+
+
+def learn_hint(missing: list[str]) -> str:
+    """The commands that create the missing skills: record the task once, then learn it."""
+    lines = ["Record each one once, then learn it:"]
+    for name in missing:
+        url = SANDBOX_DEMOS.get(name, "<the app's URL>")
+        lines.append(f"  mimic record {name} --url {url}")
+        lines.append(f"  mimic learn recordings/{name}/recording.json")
+    return "\n".join(lines)
+
+
+def plan_groups(item: Item) -> list[dict]:
+    """The plan of one email for the dashboard: each skill, whether it runs, and its actions."""
+    from mimic.approval import plan_rows
+
+    flags = {k.split(".", 1)[-1]: v for k, v in item.flags.items()}
+    return [
+        {
+            "skill": st.skill,
+            "runs": st.runs,
+            "why": st.why,
+            "plan": plan_rows(st.actions, flags) if st.runs else [],
+        }
+        for st in item.plan
+    ]
+
+
+def _execute(item, decision, page, skills, healer, agent_cls, check_signal, log, n, total,
+             emit=None):  # fmt: skip
+    emit = emit or (lambda event: None)
     out = {
         "id": item.id,
         "title": item.title,
@@ -389,13 +565,36 @@ def _execute(item, decision, page, skills, healer, agent_cls, check_signal, log,
     if decision == "skip":
         log(f"  {n:>3}/{total}  skipped by you")
         return {**out, "status": "skipped", "error": "skipped by you"}
-    for step in item.plan:
+    from mimic.approval import plan_label
+
+    for part, step in enumerate(item.plan):
         if not step.runs:
             out["steps"].append({"skill": step.skill, "status": "skipped", "why": step.why})
             continue
         t = time.monotonic()
         page.goto(step.url)
-        result = agent_cls(page, healer=healer, skill_name=step.skill).run(step.actions)
+
+        def on_step(r, step=step, part=part):
+            action = next((a for a in step.actions if a["index"] == r.index), None)
+            emit(
+                {
+                    "type": "step",
+                    "task": n,
+                    "part": part,
+                    "index": r.index,
+                    "action": r.action,
+                    "label": plan_label(action) if action else "",
+                    "success": r.success,
+                    "strategy": r.strategy,
+                    "healed": r.healed,
+                    "confidence": r.confidence,
+                    "latency_ms": r.latency_ms,
+                    "error": r.error,
+                }
+            )
+
+        agent = agent_cls(page, on_step=on_step, healer=healer, skill_name=step.skill)
+        result = agent.run(step.actions)
         error = result.error
         if result.success and skills[step.skill].success is not None:
             error = check_signal(page, skills[step.skill].success)
@@ -428,7 +627,7 @@ def _skills(wf: Workflow) -> dict[str, Skill]:
     skills = {name: store.get(name) for name in sorted(names)}
     missing = [n for n, s in skills.items() if s is None]
     if missing:
-        raise SystemExit(f"Unknown skill(s): {', '.join(missing)}. Learn them first (mimic learn).")
+        raise SystemExit(f"Unknown skill(s): {', '.join(missing)}. " + learn_hint(missing))
     return skills
 
 
@@ -453,6 +652,12 @@ def main(argv: list[str] | None = None) -> int:
     wf = load_workflow(args.file)
     skills = _skills(wf)
     client = OllamaClient()
+    problems = lint_workflow(wf, skills)
+    if problems:
+        print(f"{args.file}: fix these first")
+        for p in problems:
+            print(f"  - {p}")
+        return 1
     if args.cmd == "check":
         known = known_fields(wf, skills, [])
         compile_rules(wf, known, client, settings.planner_model)

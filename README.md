@@ -197,12 +197,28 @@ steps:
   email stops there and the next one starts.
 - The sandbox's WorkSuite (`/mail`, `/approvals/new`, the ledger) runs this end to end in the
   tests: 6 emails, the rule sends only the large invoices for approval, and each app is checked
-  for what it really received. Document reading is measured separately (96% of fields).
+  for what it really received. Document reading is measured separately (99.2% of fields).
+
+Each skill is learned once, in its own app (with `mimic sandbox` running):
+
+```bash
+mimic record enter_invoice --url http://localhost:8001                          # fill an invoice, Save
+mimic record request_approval --url http://localhost:8001/approvals/new        # pick an approver, Request
+mimic record reply_to_supplier --url http://localhost:8001/mail/mail-0001/reply # type a message, Send
+mimic learn recordings/enter_invoice/recording.json     # and the same for the two others
+```
 
 ```bash
 mimic workflow check examples/process_invoice_emails.yml
 mimic workflow run examples/process_invoice_emails.yml --limit 3
+mimic serve          # or pick the workflow in the dashboard (Run: Workflow)
 ```
+
+In the dashboard, each email's plan is shown skill by skill: the values read from the
+attachment (uncertain ones flagged), the skills a rule skips and why. Approve, skip or approve
+the rest, then watch every skill run in the agent browser.
+
+<img src="docs/dashboard-workflow.png" alt="Dashboard: one email's plan, skill by skill, waiting for approval" width="820"/>
 
 ### Distilling vision into a small model
 
@@ -316,7 +332,7 @@ uv run pytest
 | `--chaos 0.4 --risk-policy predicted` | Flaky pages, fix only the risky steps |
 | `--docs FOLDER` | Read the inputs from PDFs / photos instead of a data file |
 | `mimic workflow check` · `run FILE.yml` | Chain skills across apps for every email / row, with conditions |
-| `mimic serve [--port 8765]` | Live dashboard: watch the agent, approve from the browser |
+| `mimic serve [--port 8765]` | Live dashboard: run a skill or a workflow, approve from the browser |
 | `mimic read FILE` · `mimic extract eval` | Extract one document · measure extraction accuracy |
 | `mimic extract receipts --n 50` | Benchmark on real scanned receipts (ICDAR 2019 SROIE) |
 | `mimic risk collect` · `train` · `evaluate` | Telemetry, XGBoost, A/B test |
@@ -366,6 +382,7 @@ A small accounts-payable app used to train and grade the agent.
 - [x] Checkboxes, radio buttons, Enter, uploads, multi-page flows; tested on a real Django admin
 - [x] Success learned from the demo's confirmation; Excel / CSV in, results file out
 - [x] WorkSuite: mailbox + approvals apps, workflows across apps with plain-words conditions
+- [x] Workflows in the dashboard: start one, approve each email's plan, watch every skill run
 - [ ] Learn from a screen-recording video
 - [ ] Browser extension to record in one click
 

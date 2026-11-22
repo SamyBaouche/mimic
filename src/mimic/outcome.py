@@ -59,16 +59,17 @@ def _wild_text(text: str, values: list[str]) -> str:
             if not any(a < start + len(v) and start < b for a, b in spans):
                 spans.append((start, start + len(v)))
             start = lower.find(v.lower(), start + 1)
+    short = {v.lower() for v in values if 0 < len(v) < 2}  # "X", "5": whole words only
     out, pos = [], 0
     for a, b in sorted(spans):
-        out.append(_escape_tokens(text[pos:a]))
+        out.append(_escape_tokens(text[pos:a], short))
         out.append(".+?")
         pos = b
-    out.append(_escape_tokens(text[pos:]))
+    out.append(_escape_tokens(text[pos:], short))
     return "".join(out)
 
 
-def _escape_tokens(chunk: str) -> str:
+def _escape_tokens(chunk: str, short: set[str] = frozenset()) -> str:
     """Escape literal text; tokens with digits (ids, counts, dates) become wildcards."""
     pieces = []
     for token in re.split(r"(\s+)", chunk):
@@ -76,6 +77,9 @@ def _escape_tokens(chunk: str) -> str:
             continue
         if token.isspace():
             pieces.append(r"\s+")
+        elif token.rstrip(".,;:!?)\"'»”").lower() in short:
+            trail = token[len(token.rstrip(".,;:!?)\"'»”")) :]
+            pieces.append(r"\S+?" + re.escape(trail) if trail else r"\S+")
         elif any(c.isdigit() for c in token) or "@" in token or "://" in token:
             # ids, amounts, dates, email addresses, links: they change from task to task
             trail = re.match(r"^(.*?)([.,;:!?)\"'»”]*)$", token)

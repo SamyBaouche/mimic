@@ -29,6 +29,7 @@ STATIC = Path(__file__).parent / "static"
 
 
 class RunRequest(BaseModel):
+    workflow: str | None = None  # path to a workflow .yml: runs it instead of one skill
     skill: str = "enter_invoice"
     source: str = "data"  # data | docs
     path: str | None = None
@@ -86,8 +87,53 @@ class LiveEmitter:
         self.publish(event)
 
 
+def workflow_runner(req: RunRequest, approver, emit) -> None:
+    """The same run_workflow() as `mimic workflow run`, reviewed from the page."""
+    from mimic.approval import WebWorkflowReview
+    from mimic.extract import DocumentExtractor
+    from mimic.healing import Healer, HealMemory
+    from mimic.llm import OllamaClient
+    from mimic.run import _load_matcher
+    from mimic.vision import VisionLocator
+    from mimic.workflow import ReadStep, _skills, lint_workflow, load_workflow, run_workflow
+
+    settings = get_settings()
+    wf = load_workflow(Path(req.workflow))
+    try:
+        skills = _skills(wf)
+    except SystemExit as exc:  # unknown skill: say it in the page
+        raise ValueError(str(exc)) from None
+    problems = lint_workflow(wf, skills)
+    if problems:
+        raise ValueError("Fix the workflow first:\n- " + "\n- ".join(problems))
+    client = OllamaClient()
+    extractor = None
+    if any(isinstance(s, ReadStep) for s in wf.steps):
+        extractor = DocumentExtractor(client, settings.vision_model)
+    healer = None
+    if req.heal:
+        healer = Healer(
+            embedder=client.embed,
+            vision=VisionLocator(client, settings.vision_model),
+            memory=HealMemory(use_db=True),
+            matcher=_load_matcher(),
+        )
+    review = WebWorkflowReview(approver) if approver is not None else None
+    emit({"type": "status", "message": f"Reading the items of {wf.name}..."})
+    try:
+        run_workflow(
+            wf, skills, extractor, review, healer, client, settings.planner_model,
+            limit=req.limit, log=lambda m: emit({"type": "status", "message": str(m).strip()}),
+            emit=emit,
+        )  # fmt: skip
+    except SystemExit as exc:  # app not running...: say it in the page
+        raise ValueError(str(exc)) from None
+
+
 def default_runner(req: RunRequest, approver, emit) -> None:
     """Build everything the CLI builds, then call the same run_batch()."""
+    if req.workflow:
+        return workflow_runner(req, approver, emit)
     from mimic.healing import Healer, HealMemory
     from mimic.llm import OllamaClient
     from mimic.run import _load_matcher, collect_options, records_from_documents, run_batch
@@ -165,6 +211,29 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             return out
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(503, f"Skill library unavailable: {type(exc).__name__}") from exc
+
+    @app.get("/api/workflows")
+    def workflows():
+        """Workflow files next to where `mimic serve` runs (., workflows/, examples/)."""
+        from mimic.workflow import RunStep, load_workflow
+
+        out = []
+        for folder in (Path("."), Path("workflows"), Path("examples")):
+            for path in sorted(folder.glob("*.y*ml")):
+                try:
+                    wf = load_workflow(path)
+                except Exception:  # noqa: BLE001 - not a workflow file
+                    continue
+                skills = [s.run for s in wf.steps if isinstance(s, RunStep)]
+                out.append(
+                    {
+                        "path": str(path),
+                        "name": wf.name,
+                        "description": wf.description,
+                        "skills": skills,
+                    }
+                )
+        return out
 
     @app.get("/api/state")
     def state():

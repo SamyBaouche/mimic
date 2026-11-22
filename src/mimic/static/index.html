@@ -108,6 +108,9 @@
                    background: var(--window); border: 1px solid var(--select); border-radius: 4px; }
   td.result { width: 118px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }
   tr.current td { background: var(--select-bg); }
+  tr.group td { background: var(--raised); color: var(--ink); font-weight: 600; padding-top: 8px; }
+  tr.group.off td { color: var(--ink-3); font-weight: 500; }
+  tr.group .why { color: var(--ink-2); font-weight: 400; margin-left: 8px; }
   tr.current td:first-child { box-shadow: inset 2px 0 0 var(--select); }
   .ok { color: var(--ok); } .fail { color: var(--fail); } .waitc { color: var(--wait); }
   .note { display: block; color: var(--wait); font-family: "Segoe UI", system-ui, sans-serif; font-size: 12px; }
@@ -116,7 +119,7 @@
   /* approval strip */
   .decide { border-top: 1px solid var(--rule); padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;
             background: var(--raised); }
-  .decide .msg { font-size: 12.5px; color: var(--ink-2); min-height: 18px; }
+  .decide .msg { font-size: 12.5px; color: var(--ink-2); min-height: 18px; white-space: pre-line; }
   .decide .msg.ask { color: var(--ink); background: var(--wait-bg); border: 1px solid rgba(245, 185, 79, .3);
                      padding: 6px 9px; border-radius: 5px; }
   .decide .msg.err { color: var(--fail); }
@@ -134,7 +137,7 @@
   .tabs .count { color: var(--ink-3); margin-left: 5px; font-family: var(--mono); font-size: 11.5px; }
   .tab { flex: 1; overflow: auto; min-height: 0; }
   #log { font-family: var(--mono); font-size: 12px; padding: 6px 0; }
-  #log div { display: grid; grid-template-columns: 96px 58px 1fr; gap: 12px; padding: 1px 12px; color: #c9c9d0; }
+  #log div { display: grid; grid-template-columns: 96px 58px 1fr; gap: 12px; padding: 1px 12px; color: #c9c9d0; white-space: pre-wrap; }
   #log .t { color: var(--ink-3); } #log .k { color: #7f8db0; }
   #log .heal { background: var(--wait-bg); color: var(--wait); box-shadow: inset 2px 0 0 var(--wait); }
   #log .bad { color: var(--fail); }
@@ -167,19 +170,21 @@
 
 <form class="toolbar" id="start-form" autocomplete="off">
   <fieldset id="start-fields">
-    <label>Skill <select id="f-skill"><option>Loading...</option></select></label>
-    <label>Inputs
+    <label>Run <select id="f-kind"><option value="skill">One skill</option><option value="workflow">Workflow</option></select></label>
+    <label id="l-workflow" hidden>Workflow <select id="f-workflow"><option value="">Loading...</option></select></label>
+    <label id="l-skill">Skill <select id="f-skill"><option>Loading...</option></select></label>
+    <label id="l-source">Inputs
       <select id="f-source">
         <option value="data">Data file</option>
         <option value="docs">Documents folder</option>
       </select></label>
-    <label><input type="text" id="f-path" placeholder="sandbox/data/invoices.json" aria-label="Path"></label>
+    <label id="l-path"><input type="text" id="f-path" placeholder="sandbox/data/invoices.json" aria-label="Path"></label>
     <span class="sep"></span>
-    <label>Interface <select id="f-layout"><option value="v1">v1</option><option value="v2">v2 (redesign)</option></select></label>
+    <label id="l-layout">Interface <select id="f-layout"><option value="v1">v1</option><option value="v2">v2 (redesign)</option></select></label>
     <label>Tasks <input type="number" id="f-limit" value="5" min="1" max="500"></label>
     <span class="sep"></span>
     <label class="check" title="Show each plan and wait for your approval"><input type="checkbox" id="f-review" checked> Review plans</label>
-    <label class="check" title="Fill the form, then ask before pressing submit"><input type="checkbox" id="f-confirm"> Confirm submits</label>
+    <label class="check" id="l-confirm" title="Fill the form, then ask before pressing submit"><input type="checkbox" id="f-confirm"> Confirm submits</label>
     <label class="check" title="Find elements again when the interface changed"><input type="checkbox" id="f-heal" checked> Self-heal</label>
   </fieldset>
   <div class="run-controls">
@@ -273,10 +278,25 @@ function setState(state, text) {
   $("live").textContent = text;
 }
 
+const flat = (plan) => plan.map((r) => ({ ...r, key: String(r.index) }));
+function grouped(steps) {
+  const rows = [];
+  steps.forEach((g, part) => {
+    rows.push({ header: true, part, skill: g.skill, runs: g.runs, why: g.why });
+    g.plan.forEach((r) => rows.push({ ...r, key: `${part}:${r.index}` }));
+  });
+  return rows;
+}
+const actionRows = () => S.plan.filter((r) => !r.header);
+
 function renderPlan() {
   if (!S.plan.length) return;
   $("steps").innerHTML = S.plan.map((r) => {
-    const res = S.results[r.index];
+    if (r.header) {
+      return `<tr class="group ${r.runs ? "" : "off"}"><td colspan="5">${r.part + 1}. ${esc(r.skill)}` +
+        (r.why ? `<span class="why">${esc(r.why)}</span>` : "") + `</td></tr>`;
+    }
+    const res = S.results[r.key];
     const isClick = r.action === "click" || r.action === "press";
     let value = r.action === "click" ? "" : esc(r.value ?? "missing");
     if (S.editing && !isClick && !r.secret) value = `<input data-param="${esc(r.parameter)}" value="${esc(r.value)}">`;
@@ -285,8 +305,8 @@ function renderPlan() {
     if (res) result = !res.success ? `<span class="fail">Failed</span>`
       : res.strategy === "not needed" ? "Not needed"
       : `<span class="ok">Done</span> ${res.latency_ms} ms`;
-    else if (S.current === r.index) result = "In progress";
-    return `<tr class="${S.current === r.index ? "current" : ""}">
+    else if (S.current === r.key) result = "In progress";
+    return `<tr class="${S.current === r.key ? "current" : ""}">
       <td class="num">${r.index + 1}</td><td>${VERB[r.action] || r.action}</td>
       <td>${esc(r.label)}</td><td class="value">${value}</td><td class="result">${result}</td></tr>`;
   }).join("");
@@ -297,7 +317,7 @@ function renderPlan() {
 function setButtons() {
   const r = S.reviewing && !S.editing, c = S.confirming;
   $("b-approve").disabled = !(S.reviewing || c);
-  $("b-edit").disabled = !S.reviewing || c;
+  $("b-edit").disabled = !S.reviewing || c || S.workflow;
   $("b-skip").disabled = !(S.reviewing || c);
   $("b-all").disabled = !r;
   $("b-pause").disabled = !S.running;
@@ -365,18 +385,63 @@ function handle(e) {
       break;
 
     case "run_started":
+      S.itemMs = 0;
       Object.assign(S, { running: true, total: e.total, finished: 0, repairs: 0, tasks: {}, paused: false });
       $("tasks").innerHTML = ""; $("run-id").textContent = e.run_id;
-      $("url").textContent = `${e.url}?layout=${e.layout}`;
+      $("url").textContent = e.layout ? `${e.url}?layout=${e.layout}` : e.url;
       $("idle").innerHTML = "<strong>Waiting for the first plan</strong>The agent opens the app once you approve task 1.";
       $("s-success").textContent = "-"; $("s-avg").textContent = "-";
       setState("acting", "Running");
-      log(e, `Run started: ${e.skill} on interface ${e.layout}, ${e.total} task(s)`);
+      log(e, e.workflow ? `Workflow started: ${e.skill}, ${e.total} item(s)`
+                        : `Run started: ${e.skill} on interface ${e.layout}, ${e.total} task(s)`);
       progress(); setButtons();
       break;
 
+    case "item_review":
+      Object.assign(S, { plan: grouped(e.steps), results: {}, current: null, reviewing: true,
+                         editing: false, workflow: true });
+      $("t-title").textContent = `Item ${e.index} of ${e.total}`; $("t-sub").textContent = e.title;
+      taskRow(e.index, { title: e.title, status: "Waiting for you" });
+      setState("waiting", "Waiting for you");
+      if (e.error) msg(`Cannot run this one: ${e.error}. Skip it or stop.`, "err");
+      else {
+        const off = e.steps.filter((g) => !g.runs).length, checks = Object.keys(e.flags || {}).length;
+        msg(`${e.steps.length - off} skill(s) will run, ${off} skipped by a rule` +
+            (checks ? `, ${checks} value(s) to check.` : ".") + " Approve, skip or approve all.", "ask");
+      }
+      log({ ...e, task: e.index }, `Waiting for approval: ${e.title}`);
+      renderPlan(); setButtons();
+      break;
+
+    case "item_started": {
+      const rows = grouped(e.steps), firstRow = rows.find((r) => !r.header);
+      Object.assign(S, { plan: rows, results: {}, current: firstRow ? firstRow.key : null,
+                         reviewing: false, editing: false, workflow: true, taskIndex: e.index });
+      $("t-title").textContent = `Item ${e.index} of ${e.total}`; $("t-sub").textContent = e.title;
+      taskRow(e.index, { title: e.title, status: "Running" });
+      setState("acting", "Running"); msg("The agent is working through this item's skills.");
+      log({ ...e, task: e.index }, `Started ${e.title}`);
+      renderPlan(); setButtons();
+      break;
+    }
+
+    case "item_done": {
+      S.finished += 1;
+      const status = { done: "Done", failed: "Failed", skipped: "Skipped" }[e.status] || e.status;
+      const summary = (e.steps || []).map((x) => `${x.skill}: ${x.status}`).join(", ");
+      taskRow(e.index, { status, ms: (e.steps || []).reduce((t, x) => t + (x.ms || 0), 0) || "",
+                         note: e.error || summary });
+      log({ ...e, task: e.index }, status === "Done" ? `Done (${summary})` : `${status}: ${e.error || ""}`,
+          status === "Failed" ? "bad" : "");
+      $("s-success").textContent = `${e.succeeded} of ${e.done}`;
+      S.itemMs = (S.itemMs || 0) + (e.steps || []).reduce((t, x) => t + (x.ms || 0), 0);
+      $("s-avg").textContent = `${(S.itemMs / e.done / 1000).toFixed(2)} s`;
+      progress(); setButtons();
+      break;
+    }
+
     case "review":
-      Object.assign(S, { plan: e.plan, results: {}, current: null, reviewing: true, editing: false });
+      Object.assign(S, { plan: flat(e.plan), results: {}, current: null, reviewing: true, editing: false, workflow: false });
       $("t-title").textContent = `Task ${e.index} of ${e.total}`;
       $("t-sub").textContent = e.title;
       taskRow(e.index, { title: e.title, status: "Waiting for you" });
@@ -392,7 +457,7 @@ function handle(e) {
       break;
 
     case "task_started":
-      Object.assign(S, { plan: e.plan, results: {}, current: e.plan.length ? e.plan[0].index : null,
+      Object.assign(S, { plan: flat(e.plan), results: {}, current: e.plan.length ? String(e.plan[0].index) : null, workflow: false,
                          reviewing: false, editing: false, taskIndex: e.index });
       $("t-title").textContent = `Task ${e.index} of ${e.total}`; $("t-sub").textContent = e.title;
       taskRow(e.index, { title: e.title, status: "Running" });
@@ -402,10 +467,11 @@ function handle(e) {
       break;
 
     case "step": {
-      S.results[e.index] = e;
-      const next = S.plan.find((r) => !S.results[r.index]);
-      S.current = next ? next.index : null;
-      const row = S.plan.find((r) => r.index === e.index);
+      const key = e.part !== undefined ? `${e.part}:${e.index}` : String(e.index);
+      S.results[key] = e;
+      const next = actionRows().find((r) => !S.results[r.key]);
+      S.current = next ? next.key : null;
+      const row = S.plan.find((r) => r.key === key);
       const what = e.action === "click" ? `Clicked "${e.label}"`
         : e.action === "press" ? `Pressed ${row ? row.value : "a key"} in ${e.label}`
         : `${PAST[e.action] || "Did"} "${row ? row.value : ""}" in ${e.label}`;
@@ -448,10 +514,17 @@ function handle(e) {
       const r = e.report;
       Object.assign(S, { running: false, reviewing: false, confirming: false, current: null, paused: false });
       setState("done", "Done");
-      $("s-success").textContent = `${Math.round(r.task_success_rate * 100)}%`;
-      const by = { application: "the application's own records", confirmation: "the confirmation learned from the demo", agent: "the agent's own checks" };
-      msg(`Finished: ${r.executed} executed, ${r.skipped_by_user} skipped. Checked against ${by[r.graded_by] || r.graded_by}.`);
-      log(e, `Run finished, ${Math.round(r.task_success_rate * 100)}% of tasks succeeded`);
+      if (r.workflow) {
+        $("s-success").textContent = `${Math.round(r.success_rate * 100)}%`;
+        msg(`Finished: ${r.done} of ${r.processed} items done, ${r.steps_run} skill runs, ` +
+            `${r.steps_skipped_by_rule} skipped by a rule. Each run checked against its own confirmation.`);
+        log(e, `Workflow finished, ${r.done} of ${r.processed} items done`);
+      } else {
+        $("s-success").textContent = `${Math.round(r.task_success_rate * 100)}%`;
+        const by = { application: "the application's own records", confirmation: "the confirmation learned from the demo", agent: "the agent's own checks" };
+        msg(`Finished: ${r.executed} executed, ${r.skipped_by_user} skipped. Checked against ${by[r.graded_by] || r.graded_by}.`);
+        log(e, `Run finished, ${Math.round(r.task_success_rate * 100)}% of tasks succeeded`);
+      }
       renderPlan(); setButtons();
       break;
     }
@@ -512,9 +585,21 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
 $("f-source").onchange = () => {
   $("f-path").placeholder = $("f-source").value === "docs" ? "sandbox/data/documents" : "sandbox/data/invoices.json";
 };
+function kindChanged() {
+  const wf = $("f-kind").value === "workflow";
+  $("l-workflow").hidden = !wf;
+  for (const id of ["l-skill", "l-source", "l-path", "l-layout", "l-confirm"]) $(id).hidden = wf;
+}
+$("f-kind").onchange = kindChanged;
+
 $("start-form").onsubmit = async (ev) => {
   ev.preventDefault();
+  if ($("f-kind").value === "workflow" && !$("f-workflow").value) {
+    msg("No workflow file found. Put one in this folder, workflows/ or examples/.", "err");
+    return;
+  }
   const body = {
+    workflow: $("f-kind").value === "workflow" ? $("f-workflow").value : null,
     skill: $("f-skill").value, source: $("f-source").value, path: $("f-path").value || null,
     layout: $("f-layout").value, limit: Number($("f-limit").value) || 5,
     review: $("f-review").checked, confirm_submit: $("f-confirm").checked, heal: $("f-heal").checked,
@@ -538,7 +623,15 @@ async function loadSkills() {
     msg(`Can't load skills: ${err.message}. Is the database running (docker compose up -d)?`, "err");
   }
 }
-loadSkills(); connect(); setButtons();
+async function loadWorkflows() {
+  try {
+    const list = await (await fetch("/api/workflows")).json();
+    $("f-workflow").innerHTML = list.length
+      ? list.map((w) => `<option value="${esc(w.path)}" title="${esc(w.description)}">${esc(w.name)} (${esc(w.skills.join(" > "))})</option>`).join("")
+      : "<option value=''>No workflow files</option>";
+  } catch { $("f-workflow").innerHTML = "<option value=''>Unavailable</option>"; }
+}
+loadSkills(); loadWorkflows(); kindChanged(); connect(); setButtons();
 </script>
 </body>
 </html>

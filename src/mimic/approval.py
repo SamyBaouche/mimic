@@ -54,7 +54,7 @@ def display_value(a: dict) -> str:
     """How a planned value is shown to a person: masked, yes/no, file name..."""
     from pathlib import Path
 
-    from mimic.agent import as_bool
+    from mimic.models import as_bool
 
     if a["value"] in (None, "None"):
         return "(missing)"
@@ -289,3 +289,37 @@ class WebApprover(ConsoleApprover):
         if not ok:
             self.stats["declined_submit"] += 1
         return ok
+
+
+class WebWorkflowReview:
+    """Approve each email of a workflow from the dashboard (same buttons, same pause / stop)."""
+
+    def __init__(self, approver: WebApprover):
+        self.approver = approver
+
+    def checkpoint(self) -> bool:
+        return self.approver.checkpoint()
+
+    def __call__(self, text: str, item=None, index: int = 0, total: int = 0) -> str:
+        from mimic.workflow import plan_groups
+
+        if self.approver.auto or item is None:
+            return "approve"
+        self.approver.publish(
+            {
+                "type": "item_review",
+                "index": index,
+                "total": total,
+                "title": item.title,
+                "flags": item.flags,
+                "error": item.error,
+                "steps": plan_groups(item),
+            }
+        )
+        while True:
+            action = self.approver._wait().get("action")
+            if action in ("approve", "approve_all"):
+                self.approver.auto = action == "approve_all"
+                return "approve"
+            if action in ("skip", "quit"):
+                return action

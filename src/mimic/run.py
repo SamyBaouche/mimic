@@ -218,7 +218,8 @@ def run_batch(
 
     def on_step(step: StepResult) -> None:
         logger(step)
-        action = current["actions"][step.index] if step.index < len(current["actions"]) else {}
+        # Step numbers are ids, not positions: an edited skill can skip some.
+        action = next((a for a in current["actions"] if a["index"] == step.index), {})
         emit(
             {
                 "type": "step",

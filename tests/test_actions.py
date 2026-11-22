@@ -244,3 +244,21 @@ def test_a_task_that_stops_early_is_not_counted_as_done(expense_skill, sandbox_s
     assert report["agent_reported_success_rate"] == 0.0
     assert report["task_success_rate"] == 0.0
     assert "not on the page the demo ended on" in next(iter(report["failures"]))
+
+
+def test_a_one_letter_demo_value_is_still_variable():
+    import re
+
+    from mimic.models import Outcome
+    from mimic.outcome import learn_signal
+
+    sig = learn_signal(
+        Outcome(
+            url="http://x/approvals/APR-0001",
+            texts=["Approval request APR-0001 sent to CFO for X."],
+        ),
+        "http://x/approvals/new",
+        ["X", "9000", "CFO"],
+    )
+    assert re.search(sig.text, "Approval request APR-0007 sent to CFO for INV-20260003.", re.I)
+    assert not re.search(sig.text, "Approval request APR-0007 rejected for INV-1.", re.I)

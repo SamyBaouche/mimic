@@ -57,3 +57,11 @@ class Recording(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     events: list[RecordedEvent] = Field(default_factory=list)
     outcome: Outcome | None = None
+
+
+TRUE_WORDS = {"true", "yes", "y", "1", "x", "on", "oui", "checked", "vrai"}
+
+
+def as_bool(value) -> bool:
+    """Checkbox values from a sheet: true / yes / x / oui... (agent and review)."""
+    return str(value).strip().lower() in TRUE_WORDS

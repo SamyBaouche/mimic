@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 from langgraph.graph import END, START, StateGraph
 from playwright.sync_api import Locator, Page
 
-from mimic.models import ElementInfo
+from mimic.models import TRUE_WORDS, ElementInfo, as_bool  # noqa: F401 - re-exported
 
 MAX_ATTEMPTS = 3
 LOCATE_TIMEOUT_MS = 1500
@@ -32,11 +32,6 @@ NAV_TIMEOUT_MS = 5000
 ACT_TIMEOUT_MS = 1000  # fail fast, like a production agent; mitigations wait longer
 
 STRATEGY_CONFIDENCE = {"selector": 1.0, "option": 1.0, "label": 0.8, "name": 0.7, "text": 0.6}
-TRUE_WORDS = {"true", "yes", "y", "1", "x", "on", "oui", "checked", "vrai"}
-
-
-def as_bool(value) -> bool:
-    return str(value).strip().lower() in TRUE_WORDS
 
 
 def _radio_value(el: ElementInfo, value: str) -> str:
