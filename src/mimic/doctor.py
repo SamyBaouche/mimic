@@ -88,6 +88,50 @@ def check_ollama() -> tuple[Check, list[str]]:
         )
 
 
+def check_hardware() -> Check:
+    from mimic.hardware import PROFILES, detect, recommend
+
+    s = get_settings()
+    hw = detect()
+    advised, why = recommend(hw)
+    used = f"{s.profile_used} profile ({s.profile_reason})"
+    detail = f"{hw.describe()} -> {used}"
+    heavy = "7b" in s.vision_model or "7b" in s.planner_model
+    if advised == "light" and heavy:
+        return Check(
+            "Hardware",
+            False,
+            f"{detail}; 7B models will be slow with {why}",
+            "set MIMIC_PROFILE=light (" + " + ".join(PROFILES["light"].values()) + ")",
+            required=False,
+        )
+    return Check("Hardware", True, detail, required=False)
+
+
+def pull_models(names: list[str], host: str) -> None:
+    """Download missing models through Ollama's API, with a simple progress line."""
+    import json
+
+    for name in names:
+        print(f"  pulling {name}...")
+        last = -1
+        with httpx.stream(
+            "POST", f"{host}/api/pull", json={"model": name, "stream": True}, timeout=None
+        ) as r:
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                msg = json.loads(line)
+                if msg.get("error"):
+                    raise RuntimeError(f"{name}: {msg['error']}")
+                if msg.get("total") and msg.get("completed") is not None:
+                    pct = int(100 * msg["completed"] / msg["total"])
+                    if pct >= last + 10:
+                        print(f"    {pct:3d}%  {msg['total'] / 1e9:.1f} GB")
+                        last = pct
+        print(f"  {name} ready")
+
+
 def check_models(available: list[str] | None) -> list[Check]:
     s = get_settings()
     roles = [
@@ -107,7 +151,10 @@ def check_models(available: list[str] | None) -> list[Check]:
         ok = model in have or model.removesuffix(":latest") in have
         checks.append(
             Check(
-                f"Model {model}", ok, role if ok else f"not pulled ({role})", f"ollama pull {model}"
+                f"Model {model}",
+                ok,
+                role if ok else f"not pulled ({role})",
+                f"mimic doctor --pull  (or: ollama pull {model})",
             )
         )
     return checks
@@ -153,6 +200,7 @@ def run_checks() -> list[Check]:
     ollama, models = check_ollama()
     return [
         check_python(),
+        check_hardware(),
         check_storage(),
         check_browser(),
         ollama,
@@ -162,7 +210,21 @@ def run_checks() -> list[Check]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="mimic doctor", description="Check what Mimic needs")
+    parser.add_argument("--pull", action="store_true", help="Download the missing local models")
+    args = parser.parse_args(argv)
     print(f"Mimic {__version__}\n")
+    if args.pull:
+        ollama, available = check_ollama()
+        if not ollama.ok:
+            print(f"Ollama is {ollama.detail}. {ollama.fix}")
+            return 1
+        missing = [c.name.removeprefix("Model ") for c in check_models(available) if not c.ok]
+        if missing:
+            pull_models(missing, get_settings().ollama_host)
+            print()
     checks = run_checks()
     width = max(len(c.name) for c in checks) + 2
     for c in checks:

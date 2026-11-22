@@ -231,10 +231,12 @@ mimic matcher push --repo your-name/mimic-element-matcher   # optional: publish 
 ```bash
 pip install mimic-agent
 playwright install chromium
-ollama pull qwen2.5vl:7b && ollama pull qwen2.5:7b && ollama pull nomic-embed-text
-
-mimic doctor        # checks the browser, the models and storage, and says how to fix what is missing
+mimic doctor --pull   # picks the models for your machine, downloads them, checks everything else
 ```
+
+Mimic picks its local models from your hardware: **7B models** with a GPU or 16 GB+ of RAM,
+**3B models** ("light") on smaller laptops. Force one with `MIMIC_PROFILE=standard` or
+`MIMIC_PROFILE=light`.
 
 Try it on the demo app (a small accounts-payable tool) in a second terminal:
 
@@ -282,7 +284,7 @@ uv run pytest
 
 | Command | What it does |
 |:--|:--|
-| `mimic doctor` | Check browser, local models, storage; print the fix for anything missing |
+| `mimic doctor [--pull]` | Check hardware, browser, local models, storage; `--pull` downloads missing models |
 | `mimic sandbox [--port 8001]` | Start the demo app and write demo invoices and PDFs |
 | `mimic record NAME --url URL` | Record one demonstration |
 | `mimic learn PATH` | Turn a recording into a reusable skill |

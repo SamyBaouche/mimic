@@ -5,15 +5,19 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
 ## [Unreleased]
 
 ### Added
+- Model profiles picked from the hardware: 7B models with a GPU or 16 GB+ of RAM, 3B models
+  ("light") otherwise; `MIMIC_PROFILE=auto|standard|light`.
+- `mimic doctor` shows the hardware and the profile it chose, warns when models are too large
+  for the machine, and `mimic doctor --pull` downloads the missing models.
+
+## [0.3.0] - 2026-11-20
+
+### Added
 - WorkSuite sandbox: a mailbox (supplier emails with invoice PDFs, replies) and an approvals app.
 - Workflows (`mimic workflow check | run`): chain skills across apps for every email or row;
   read attachments; `if:` conditions in plain words, translated into checked rules; one plan
   per email; every step verified with its own confirmation.
 - Messages with email addresses or links are recognised as varying in success signals.
-
-## [0.3.0] - 2026-11-20
-
-### Added
 - New actions: checkboxes, radio buttons, Enter in a field, file uploads, multi-page flows.
 - Success signal learned from the end of the demo (final page + confirmation message); runs are
   graded with it on any site.
