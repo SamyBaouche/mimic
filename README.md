@@ -290,6 +290,8 @@ uv run pytest
 | `mimic record NAME --url URL` | Record one demonstration |
 | `mimic learn PATH` | Turn a recording into a reusable skill |
 | `mimic skills` · `show N` · `search "TEXT"` · `delete N` | Manage the skill library |
+| `mimic skills edit N` | Change a skill without recording it again: `--fix input=value`, `--remove STEP`, `--input STEP=name`, `--rename old=new` (or interactive) |
+| `mimic skills export N` · `import FILE` | Share a skill as a .json file; undo an edit from its automatic backup |
 | `mimic run N --data FILE.xlsx` | Replay on every row of an Excel / CSV / JSON file, with plan review |
 | `--only-failed` · `--results out.xlsx` | Retry only the rows not done · choose where results go |
 | `--yes` | Skip the review (trusted skills only) |

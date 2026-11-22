@@ -5,6 +5,9 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
 ## [Unreleased]
 
 ### Added
+- `mimic skills edit`: fix a value, remove a step, turn a step into an input, rename inputs,
+  change the description, interactively or with flags; every edit is checked, and the previous
+  version is backed up. `mimic skills export` / `import` to share a skill or undo an edit.
 - Model profiles picked from the hardware: 7B models with a GPU or 16 GB+ of RAM, 3B models
   ("light") otherwise; `MIMIC_PROFILE=auto|standard|light`.
 - `mimic doctor` shows the hardware and the profile it chose, warns when models are too large

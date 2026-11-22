@@ -25,6 +25,9 @@ class SkillStore:
     def list_names(self) -> list[str]:
         return get_storage().list_skills()
 
+    def embedding(self, name: str) -> list[float] | None:
+        return get_storage().get_embedding(name)
+
     def delete(self, name: str) -> bool:
         return get_storage().delete_skill(name)
 

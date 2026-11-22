@@ -52,6 +52,7 @@ class Storage:
     def init(self) -> None: ...
     def save_skill(self, skill: Skill, embedding: list[float] | None) -> int: ...
     def get_skill(self, name: str) -> Skill | None: ...
+    def get_embedding(self, name: str) -> list[float] | None: ...
     def search_skills(self, embedding: list[float], k: int = 3) -> list[tuple[Skill, float]]: ...
     def list_skills(self) -> list[str]: ...
     def delete_skill(self, name: str) -> bool: ...
@@ -171,6 +172,11 @@ class SQLiteStorage(Storage):
         with self._conn() as conn:
             row = conn.execute("SELECT steps FROM skills WHERE name = ?", (name,)).fetchone()
         return Skill.model_validate_json(row[0]) if row else None
+
+    def get_embedding(self, name):
+        with self._conn() as conn:
+            row = conn.execute("SELECT embedding FROM skills WHERE name = ?", (name,)).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
 
     def search_skills(self, embedding, k=3):
         with self._conn() as conn:
@@ -387,6 +393,13 @@ class PostgresStorage(Storage):
         with self._conn() as conn:
             row = conn.execute("SELECT steps FROM skills WHERE name = %s", (name,)).fetchone()
         return Skill.model_validate(row[0]) if row else None
+
+    def get_embedding(self, name):
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT embedding::text FROM skills WHERE name = %s", (name,)
+            ).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
 
     def search_skills(self, embedding, k=3):
         if not self._fits(embedding):

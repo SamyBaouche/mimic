@@ -28,6 +28,9 @@ Skills
   mimic skills show NAME           Steps and parameters of a skill
   mimic skills search "TEXT"       Find a skill by what it does
   mimic skills delete NAME         Forget a skill
+  mimic skills edit NAME           Change a skill without recording it again
+  mimic skills export NAME         Save a skill to a .json file (share it, keep it)
+  mimic skills import FILE.json    Add a skill from a file (or undo an edit)
 
 Documents and models
   mimic read FILE [--skill NAME]   Extract the skill's fields from a PDF or photo
@@ -114,11 +117,116 @@ def cmd_skills(rest: list[str]) -> int:
             return 0
         print(f"No skill named '{args[0]}'.")
         return 1
+    if action == "edit" and args:
+        return _edit(args)
+    if action == "export" and args:
+        return _export(args)
+    if action == "import" and args:
+        return _import(args)
     if action == "search" and args:
         learn.main(["search", " ".join(args)])
         return 0
-    print("Usage: mimic skills [list | show NAME | search TEXT | delete NAME]")
+    print(
+        "Usage: mimic skills [list | show NAME | search TEXT | delete NAME | edit NAME"
+        " | export NAME | import FILE]"
+    )
     return 2
+
+
+def _edit(args: list[str]) -> int:
+    import argparse
+
+    from mimic import editing, learn
+    from mimic.config import get_settings
+    from mimic.store import SkillStore
+
+    parser = argparse.ArgumentParser(prog="mimic skills edit")
+    parser.add_argument("name")
+    parser.add_argument("--remove", action="append", default=[], metavar="STEP")
+    parser.add_argument("--fix", action="append", default=[], metavar="INPUT=VALUE")
+    parser.add_argument("--input", action="append", default=[], metavar="STEP=NAME")
+    parser.add_argument("--rename", action="append", default=[], metavar="OLD=NEW")
+    parser.add_argument("--describe", default=None, metavar="TEXT")
+    parser.add_argument("--dry-run", action="store_true", help="Show the changes, save nothing")
+    a = parser.parse_args(args)
+
+    store = SkillStore()
+    skill = store.get(a.name)
+    if skill is None:
+        print(f"No skill named '{a.name}'. See them with: mimic skills")
+        return 1
+    try:
+        if any([a.remove, a.fix, a.input, a.rename, a.describe]):
+            edited = editing.apply_edits(skill, a.remove, a.fix, a.input, a.rename, a.describe)
+        else:
+            edited = editing.interactive(skill, learn.print_skill)
+            if edited is None:
+                print("Left without saving.")
+                return 0
+    except editing.EditError as exc:
+        print(f"Cannot edit '{a.name}': {exc}")
+        return 1
+    done = editing.changes(skill, edited)
+    if not done:
+        print("Nothing changed.")
+        return 0
+    print("\n".join(f"  - {c}" for c in done))
+    if a.dry_run:
+        print("Dry run: nothing saved.")
+        return 0
+    saved_to = editing.backup(skill, get_settings().mimic_home / "backups")
+    from mimic.llm import OllamaClient
+
+    editing.save(edited, store, OllamaClient().embed, previous=skill)
+    print(f"Saved. Previous version: {saved_to}")
+    print(f'  (undo with: mimic skills import "{saved_to}")')
+    return 0
+
+
+def _export(args: list[str]) -> int:
+    import argparse
+    import json
+
+    from mimic.store import SkillStore
+
+    parser = argparse.ArgumentParser(prog="mimic skills export")
+    parser.add_argument("name")
+    parser.add_argument("--out", type=Path, default=None)
+    a = parser.parse_args(args)
+    skill = SkillStore().get(a.name)
+    if skill is None:
+        print(f"No skill named '{a.name}'.")
+        return 1
+    out = a.out or Path(f"{a.name}.json")
+    out.write_text(json.dumps(skill.model_dump(mode="json"), indent=2), encoding="utf-8")
+    print(f"Exported '{a.name}' to {out} (secrets are never part of a skill).")
+    return 0
+
+
+def _import(args: list[str]) -> int:
+    import argparse
+
+    from mimic import editing
+    from mimic.llm import OllamaClient
+    from mimic.store import SkillStore
+
+    parser = argparse.ArgumentParser(prog="mimic skills import")
+    parser.add_argument("file", type=Path)
+    parser.add_argument("--name", default=None, help="Save it under another name")
+    a = parser.parse_args(args)
+    try:
+        skill = editing.import_skill(a.file, a.name)
+    except (OSError, ValueError) as exc:
+        print(f"Cannot import {a.file}: {exc}")
+        return 1
+    store = SkillStore()
+    existing = store.get(skill.name)
+    editing.save(skill, store, OllamaClient().embed, previous=existing)
+    verb = "Replaced" if existing else "Imported"
+    print(
+        f"{verb} '{skill.name}' ({len(skill.steps)} steps, inputs: {', '.join(skill.parameters)})."
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
