@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
     # Published fine-tuned element matcher (downloaded once if you did not train your own).
     matcher_repo: str = "SamyBaouche/mimic-element-matcher"
+    mimic_tracking: bool = True  # env: MIMIC_TRACKING=off to log nothing in MLflow
+    mlflow_tracking_uri: str = ""  # default: sqlite in MIMIC_HOME (see tracking.py)
 
     @model_validator(mode="after")
     def _models(self):

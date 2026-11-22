@@ -100,8 +100,15 @@ class RiskModel:
         self.threshold = threshold
 
     @classmethod
-    def load(cls, path: Path = Path("models/risk_model.json")) -> RiskModel:
+    def load(cls, path: Path | None = None) -> RiskModel:
+        """The version promoted to production in MLflow, else models/risk_model.json."""
         import xgboost as xgb
+
+        if path is None:
+            from mimic import tracking
+
+            prod = tracking.production_dir("risk")
+            path = prod / "risk_model.json" if prod else Path("models/risk_model.json")
 
         booster = xgb.Booster()
         booster.load_model(str(path))

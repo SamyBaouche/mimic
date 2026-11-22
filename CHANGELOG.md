@@ -5,6 +5,13 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
 ## [Unreleased]
 
 ### Added
+- MLflow tracking and model registry (`pip install "mimic-agent[mlflow]"`): `mimic risk train`,
+  `mimic risk evaluate`, `mimic matcher train`, `mimic extract eval` and `mimic extract receipts`
+  log their parameters, metrics and files; trained models are registered as versions and Mimic
+  loads the one with the `production` alias (the first version is promoted by itself).
+  `mimic models` lists versions with their metrics, `mimic models promote KIND N` switches,
+  `mimic models ui` opens the MLflow UI. Runs live in `~/.mimic/mlflow.db` or on any server
+  (`MLFLOW_TRACKING_URI`); `MIMIC_TRACKING=off` turns it off. `mimic doctor` shows it.
 - Workflows in the dashboard: choose "Run: Workflow" to start any workflow file found in the
   current folder, `workflows/` or `examples/`. Each email's plan is shown skill by skill (values
   read, flags, skills skipped by a rule and why); approve, skip, approve the rest, pause or stop

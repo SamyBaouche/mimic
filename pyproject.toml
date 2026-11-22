@@ -48,7 +48,10 @@ matcher = [
     "torch>=2.2",
     "transformers>=4.40",
 ]
-all = ["mimic-agent[postgres,ml,matcher]"]
+mlflow = [
+    "mlflow>=2.16",
+]
+all = ["mimic-agent[postgres,ml,matcher,mlflow]"]
 # kept so `uv sync --extra agent` from older instructions still works
 agent = []
 
@@ -65,7 +68,7 @@ Model = "https://huggingface.co/SamyBaouche/mimic-element-matcher"
 dev = [
     "pytest>=8.3",
     "ruff>=0.6",
-    "mimic-agent[postgres,ml]",
+    "mimic-agent[postgres,ml,mlflow]",
     "django>=5.0",  # a real app Mimic was not built for (tests/realapps)
 ]
 
@@ -79,6 +82,7 @@ packages = ["src/mimic"]
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:mlflow.*"]  # MLflow's own SQLAlchemy notices
 
 [tool.ruff]
 line-length = 100

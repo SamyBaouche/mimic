@@ -187,6 +187,33 @@ def train(samples: list[dict], out: Path = MODEL_PATH, seed: int = 42) -> dict:
     return meta
 
 
+def track_training(meta: dict, source: str, path: Path = MODEL_PATH) -> dict | None:
+    """Log the run in MLflow and register the model as a new version (if MLflow is on)."""
+    import shutil
+    import tempfile
+
+    from mimic import tracking
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in (path, path.with_suffix(".meta.json")):
+            shutil.copy(f, Path(tmp) / f.name)
+        return tracking.log_run(
+            "mimic-risk",
+            "xgboost",
+            {
+                "source": source,
+                "n_estimators": 200,
+                "max_depth": 3,
+                "learning_rate": 0.1,
+                "threshold": meta["threshold"],
+                "features": len(meta["features"]),
+                **{f"samples_{k}": v for k, v in meta["samples"].items()},
+            },
+            {**meta["test_metrics"], "failure_rate": meta["failure_rate"]},
+            model=("risk", Path(tmp)),
+        )
+
+
 def print_training(meta: dict) -> None:
     s = meta["samples"]
     print(f"\nSamples: {s['train']} train / {s['test']} test from {s['runs']} runs")
@@ -234,7 +261,7 @@ def evaluate(skill_name: str, tasks: int, chaos: float, seed: int) -> dict:
     from mimic.sandbox.generate_invoices import generate
 
     skill, url = _setup(skill_name)
-    model = RiskModel.load()
+    model = RiskModel.load(MODEL_PATH)  # the model just trained, before you promote it
     records = generate(tasks, seed=seed)
     rows = {}
     for policy in ["never", "always", "predicted"]:
@@ -258,6 +285,21 @@ def evaluate(skill_name: str, tasks: int, chaos: float, seed: int) -> dict:
         }
     Path("reports").mkdir(exist_ok=True)
     Path("reports/risk_evaluation.json").write_text(json.dumps(rows, indent=2))
+    from mimic import tracking
+
+    tracking.log_run(
+        "mimic-risk",
+        "a/b test",
+        {
+            "skill": skill_name,
+            "tasks": tasks,
+            "chaos": chaos,
+            "seed": seed,
+            "model": str(MODEL_PATH),
+        },  # fmt: skip
+        rows,
+        files=[Path("reports/risk_evaluation.json")],
+    )
     return rows
 
 
@@ -308,7 +350,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "train":
         samples = load_samples(args.source)
         print(f"Loaded {len(samples)} steps ({sum(s['failed'] for s in samples)} failures)")
-        print_training(train(samples))
+        meta = train(samples)
+        print_training(meta)
+        track_training(meta, args.source)
     else:
         print_evaluation(evaluate(args.skill, args.tasks, args.chaos, args.seed))
 

@@ -257,6 +257,32 @@ mimic matcher push --repo your-name/mimic-element-matcher   # optional: publish 
 
 </details>
 
+### Experiments and model versions (MLflow)
+
+Every training run and every benchmark is tracked with **MLflow**: parameters, metrics and
+files, next to your skills (`~/.mimic/mlflow.db`) or on your own MLflow server
+(`MLFLOW_TRACKING_URI`). Each trained model becomes a new **registered version**; Mimic
+loads the one behind the `production` alias, so a retrained model is compared first and used
+only once you promote it.
+
+```bash
+pip install "mimic-agent[mlflow]"
+mimic risk train                 # tracked, registered as mimic-risk-model v2
+mimic risk evaluate              # A/B test of the new version, tracked too
+mimic models                     # versions side by side, which one is in production
+mimic models promote risk 2      # Mimic uses v2 from the next run
+mimic models ui                  # browse every run in the MLflow UI
+```
+
+| Experiment | What is logged |
+|:--|:--|
+| `mimic-risk` | XGBoost and its baselines (ROC AUC, PR AUC, precision, recall, F1), the A/B test |
+| `mimic-matcher` | Fine-tuning settings, loss, top-1 accuracy before / after, on held-out labels |
+| `mimic-extraction` | Document and receipt benchmarks per vision model and profile, every mistake |
+
+The first version of a model goes to production by itself; without MLflow (or with
+`MIMIC_TRACKING=off`) nothing is logged and the models in `./models` are used as before.
+
 ## Quickstart
 
 **You need:** Python 3.11+ and [Ollama](https://ollama.com). No database to install.
@@ -337,6 +363,7 @@ uv run pytest
 | `mimic extract receipts --n 50` | Benchmark on real scanned receipts (ICDAR 2019 SROIE) |
 | `mimic risk collect` · `train` · `evaluate` | Telemetry, XGBoost, A/B test |
 | `mimic matcher train` · `evaluate` · `push` | Fine-tune, measure, publish the Hugging Face element matcher |
+| `mimic models` · `promote KIND N` · `ui` | Tracked versions (MLflow), the one in production, the UI |
 
 </details>
 
@@ -365,9 +392,9 @@ A small accounts-payable app used to train and grade the agent.
 | Models (local) | Ollama · Qwen2.5 · Qwen2.5-VL · nomic-embed-text |
 | Fine-tuning | Hugging Face Transformers · PyTorch · MiniLM cross-encoder |
 | Memory & data | SQLite (default) · PostgreSQL + pgvector |
-| Machine learning | XGBoost · scikit-learn |
+| Machine learning | XGBoost · scikit-learn · MLflow (tracking, model registry) |
 | Dashboard & CLI | FastAPI · WebSocket · Chrome DevTools Protocol screencast · `mimic` CLI |
-| Quality | pytest (166 tests on Linux, Windows, macOS) · Ruff · GitHub Actions |
+| Quality | pytest (233 tests on Linux, Windows, macOS) · Ruff · GitHub Actions |
 
 ## Roadmap
 
@@ -383,6 +410,7 @@ A small accounts-payable app used to train and grade the agent.
 - [x] Success learned from the demo's confirmation; Excel / CSV in, results file out
 - [x] WorkSuite: mailbox + approvals apps, workflows across apps with plain-words conditions
 - [x] Workflows in the dashboard: start one, approve each email's plan, watch every skill run
+- [x] MLflow: every training and benchmark tracked, models versioned, `production` alias loaded
 - [ ] Learn from a screen-recording video
 - [ ] Browser extension to record in one click
 

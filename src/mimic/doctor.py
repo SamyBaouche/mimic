@@ -208,7 +208,22 @@ def check_optional() -> list[Check]:
         checks.append(Check("UI matcher", True, detail, required=False))
     else:
         checks.append(Check("UI matcher", False, "no model", "mimic matcher train", False))
+    checks.append(check_tracking())
     return checks
+
+
+def check_tracking() -> Check:
+    from mimic import tracking
+
+    if not get_settings().mimic_tracking:
+        return Check("Tracking", True, "off (MIMIC_TRACKING=off)", required=False)
+    if not tracking.available():
+        detail = "MLflow not installed; training runs are not tracked"
+        return Check("Tracking", False, detail, 'pip install "mimic-agent[mlflow]"', False)
+    prod = {k: tracking.production_version(k) for k in tracking.MODELS}
+    used = ", ".join(f"{k} v{v}" for k, v in prod.items() if v) or "no model promoted yet"
+    return Check("Tracking", True, f"MLflow at {tracking.tracking_uri()}; production: {used}",
+                 required=False)  # fmt: skip
 
 
 def run_checks() -> list[Check]:

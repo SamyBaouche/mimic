@@ -37,6 +37,7 @@ Documents and models
   mimic extract eval               Measure extraction accuracy on the demo documents
   mimic risk collect|train|evaluate     Failure-risk model (XGBoost)
   mimic matcher train|evaluate          Fine-tuned UI element matcher
+  mimic models [promote KIND N | ui]    Tracked runs and versions (MLflow), which one is used
 
 Run `mimic COMMAND --help` for the options of a command."""
 
@@ -48,6 +49,7 @@ EXTRAS = {
     "torch": "matcher",
     "transformers": "matcher",
     "psycopg": "postgres",
+    "mlflow": "mlflow",
 }
 
 
@@ -265,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         "risk": ("mimic.riskml", lambda r: r),
         "matcher": ("mimic.matcher", lambda r: r),
         "workflow": ("mimic.workflow", lambda r: r),
+        "models": ("mimic.tracking", lambda r: r or ["list"]),
     }
     if cmd not in handlers:
         print(f"Unknown command '{cmd}'. Run `mimic --help` to see the commands.")

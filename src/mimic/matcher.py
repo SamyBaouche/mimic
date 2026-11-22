@@ -31,8 +31,12 @@ MODEL_DIR = Path("models/element_matcher")  # where `mimic matcher train` writes
 def find_model(download: bool = True) -> Path | None:
     """A trained matcher: yours (models/element_matcher), else the one published on the
     Hugging Face Hub, downloaded once into ~/.mimic/models/element_matcher."""
+    from mimic import tracking
     from mimic.config import get_settings
 
+    prod = tracking.production_dir("matcher")
+    if prod is not None and (prod / "config.json").exists():
+        return prod
     if (MODEL_DIR / "config.json").exists():
         return MODEL_DIR
     settings = get_settings()
@@ -355,6 +359,27 @@ def main(argv: list[str] | None = None) -> None:
         )
         print_results(meta)
         print(f"\nSaved to {MODEL_DIR}")
+        from mimic import tracking
+
+        tracking.log_run(
+            "mimic-matcher",
+            args.base.split("/")[-1],
+            {
+                "base_model": args.base,
+                "examples": args.examples,
+                "test_examples": args.test,
+                "epochs": args.epochs,
+                "lr": args.lr,
+                "parameters": meta["parameters"],
+                "train_pairs": meta["train_pairs"],
+            },  # fmt: skip
+            {
+                **meta["results"],
+                "final_loss": meta["loss_per_epoch"][-1],
+                "train_seconds": meta["train_seconds"],
+            },  # fmt: skip
+            model=("matcher", MODEL_DIR),
+        )
     else:
         path = find_model()
         if path is None:

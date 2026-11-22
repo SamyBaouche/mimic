@@ -558,6 +558,8 @@ def main(argv: list[str] | None = None) -> None:
         Path("reports/receipts_benchmark.json").write_text(json.dumps(report, indent=2))
         out = receipts.write_mistakes(Path("reports/receipts_mistakes.csv"), mistakes)
         print(f"Every mistake, for analysis: {out}")
+        _track_benchmark("sroie-receipts", {"receipts": args.n}, report,
+                         [Path("reports/receipts_benchmark.json"), out])  # fmt: skip
         return
     skill = SkillStore().get(args.skill)
     if skill is None:
@@ -593,6 +595,28 @@ def main(argv: list[str] | None = None) -> None:
     print(json.dumps(report, indent=2))
     Path("reports").mkdir(exist_ok=True)
     Path("reports/extraction_evaluation.json").write_text(json.dumps(report, indent=2))
+    _track_benchmark("demo-documents", {"skill": args.skill, "limit": args.limit}, report,
+                     [Path("reports/extraction_evaluation.json")])  # fmt: skip
+
+
+def _track_benchmark(name: str, params: dict, report: dict, files: list[Path]) -> None:
+    from mimic import tracking
+    from mimic.config import get_settings
+
+    s = get_settings()
+    tracking.log_run(
+        "mimic-extraction",
+        f"{name} {s.vision_model}",
+        {
+            "benchmark": name,
+            "vision_model": s.vision_model,
+            "profile": s.profile_used,
+            "double_check_scans": s.double_check_scans,
+            **params,
+        },  # fmt: skip
+        report,
+        files=files,
+    )
 
 
 def default_options(skill: Skill) -> dict[str, list[str]]:
