@@ -234,6 +234,23 @@ class Extracted:
     note: str = ""
 
 
+# "No. INV-1", "Ref # INV-1", "Facture n° INV-1": the label printed before an identifier.
+_LABEL = re.compile(
+    r"^\s*(?:(?:invoice|facture|bill|receipt|re[çc]u|order|commande)\s+)?"
+    r"(?:no|n[°o]|num(?:ber|[ée]ro)?|ref(?:erence)?|r[ée]f(?:[ée]rence)?|#)(?![a-zà-ÿ])"
+    r"\s*[.:#]?\s*",
+    re.IGNORECASE,
+)
+
+
+def strip_label(raw: str, example: str | None) -> str:
+    """Drop a printed label before an identifier, unless the demo value had one too."""
+    if not any(c.isdigit() for c in raw) or (example and _LABEL.match(example)):
+        return raw
+    cleaned = _LABEL.sub("", raw, count=1).strip()
+    return cleaned or raw
+
+
 def normalize(spec: FieldSpec, raw: str | None, confidence: float) -> Extracted:
     if raw is None or str(raw).strip() == "":
         return Extracted(None, 0.0, raw, "not found")
@@ -253,7 +270,8 @@ def normalize(spec: FieldSpec, raw: str | None, confidence: float) -> Extracted:
         if value is None:
             return Extracted(None, 0.0, raw, "not an allowed option")
         return Extracted(value, min(confidence, score), raw, "" if value == raw else "mapped")
-    return Extracted(raw, confidence, raw)
+    value = strip_label(raw, spec.example)
+    return Extracted(value, confidence, raw, "" if value == raw else "label removed")
 
 
 # ---------------------------------------------------------------- extraction
@@ -267,13 +285,39 @@ def grounded(spec: FieldSpec, ex: Extracted, text: str) -> bool:
     if ex.value is None or spec.kind == "option":
         return True  # nothing to check / categories are often inferred
     flat = " ".join(text.lower().split())
-    raw = " ".join(str(ex.raw).lower().split())
     if spec.kind == "number":
         numbers = {
             normalize_number(t) for line in text.splitlines() for t in _NUMBER_TOKEN.findall(line)
         }
         return ex.value in numbers
-    return raw in flat
+    # Whole words only: "INV-2026000" must not pass because "INV-20260000" is printed.
+    # Dates are searched as printed (22/02/2026), text as cleaned (without "No.").
+    printed = ex.raw if spec.kind == "date" else ex.value
+    value = " ".join(str(printed).lower().split())
+    pattern = r"(?<![a-z0-9])" + re.escape(value) + r"(?![a-z0-9])"
+    return re.search(pattern, flat) is not None
+
+
+_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*[A-Za-z0-9]")
+
+
+def repair_from_text(value: str, text: str) -> str | None:
+    """An identifier misread by a digit or two: the one printed token that is clearly it."""
+    import difflib
+
+    if not any(c.isdigit() for c in value):
+        return None
+    scored = []
+    for token in set(_TOKEN.findall(text)):
+        if token[:3].lower() != value[:3].lower() or not any(c.isdigit() for c in token):
+            continue
+        ratio = difflib.SequenceMatcher(None, value.lower(), token.lower()).ratio()
+        if ratio >= 0.85:
+            scored.append((ratio, token))
+    scored.sort(reverse=True)
+    if not scored or (len(scored) > 1 and scored[1][0] == scored[0][0]):
+        return None  # nothing close, or two equally close: do not guess
+    return scored[0][1]
 
 
 @dataclass
@@ -319,6 +363,10 @@ class DocumentExtractor:
             except (TypeError, ValueError):
                 conf = 0.5
             got = normalize(s, raw, max(0.0, min(conf, 1.0)))
+            if text is not None and s.kind == "text" and not grounded(s, got, text):
+                fixed = repair_from_text(str(got.value), text)
+                if fixed is not None:
+                    got = Extracted(fixed, min(got.confidence, 0.8), got.raw, "fixed from the text")
             if text is not None and not grounded(s, got, text):
                 # Vision read something the document's text does not contain: flag it.
                 got = Extracted(
@@ -409,7 +457,12 @@ def main(argv: list[str] | None = None) -> None:
 
             options = collect_options(skill, skill.start_url or settings.sandbox_url) | options
         except Exception as exc:  # noqa: BLE001
-            print(f"  (dropdown options not read: {type(exc).__name__}; values kept as read)")
+            missing = [s.parameter for s in skill.steps if s.action == "select"]
+            print(
+                f"  ! Could not read the choices of {', '.join(missing)} from the app "
+                f"({type(exc).__name__}). Start it first (mimic sandbox): without the list of "
+                f"choices, these fields cannot be measured fairly."
+            )
     specs = field_specs(skill, options)
     extractor = DocumentExtractor(OllamaClient(), settings.vision_model)
 

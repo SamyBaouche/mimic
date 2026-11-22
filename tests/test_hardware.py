@@ -60,10 +60,22 @@ def test_profile_and_single_model_overrides(monkeypatch):
 def test_doctor_warns_when_models_are_too_big(monkeypatch):
     monkeypatch.setattr(hardware, "detect", lambda: Hardware(ram_gb=8))
     s = doctor.get_settings()
+    monkeypatch.setattr(s, "profile_used", "custom")  # VISION_MODEL / PLANNER_MODEL set by hand
     monkeypatch.setattr(s, "vision_model", "qwen2.5vl:7b")
     check = doctor.check_hardware()
     assert not check.ok and not check.required
     assert "MIMIC_PROFILE=light" in check.fix
+
+
+def test_doctor_says_when_env_overrides_the_profile(monkeypatch):
+    monkeypatch.setattr(hardware, "detect", lambda: Hardware(ram_gb=32))
+    s = doctor.get_settings()
+    monkeypatch.setattr(s, "profile_used", "light")
+    monkeypatch.setattr(s, "vision_model", "qwen2.5vl:7b")  # left in .env
+    monkeypatch.setattr(s, "planner_model", "qwen2.5:3b")
+    check = doctor.check_hardware()
+    assert not check.ok
+    assert "VISION_MODEL=qwen2.5vl:7b" in check.detail and ".env" in check.fix
 
 
 def test_pull_streams_progress(monkeypatch, capsys):

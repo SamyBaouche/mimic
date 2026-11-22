@@ -274,3 +274,41 @@ def test_documents_to_application_end_to_end(skill, docs, sandbox_server, browse
     assert "check: low confidence 0.30" in shown[0]  # the reviewer sees the doubtful field
     assert report["graded_by"] == "application"
     assert report["task_success_rate"] == 1.0  # the human fixed the misread total
+
+
+# ---------------------------------------------------------------- small-model mistakes
+
+from mimic.extract import Extracted as _Ex  # noqa: E402
+from mimic.extract import FieldSpec as _Spec  # noqa: E402
+from mimic.extract import grounded, repair_from_text, strip_label  # noqa: E402
+
+PDF_TEXT = "INVOICE\nNo. INV-20260000\nDate 21/05/2026\nBureau Express\nTotal $1,239.56"
+
+
+@pytest.mark.parametrize(
+    "raw, example, expected",
+    [
+        ("No. INV-20260002", "INV-20260001", "INV-20260002"),
+        ("Ref # INV-20260043", "INV-20260001", "INV-20260043"),
+        ("Facture n° F-2026-17", "F-2026-01", "F-2026-17"),
+        ("#4471", "4470", "4471"),
+        ("Norton 360", "Norton 1", "Norton 360"),  # a word that starts like "No" stays
+        ("No. 12", "No. 11", "No. 12"),  # the demo value had the label: keep it
+        ("Bureau Express", "Atlas", "Bureau Express"),  # no digits: not an identifier
+    ],
+)
+def test_strip_label(raw, example, expected):
+    assert strip_label(raw, example) == expected
+
+
+def test_grounding_needs_the_whole_identifier():
+    spec = _Spec("invoice_number", "Invoice number", "text")
+    assert grounded(spec, _Ex("INV-20260000", 0.9, "INV-20260000"), PDF_TEXT)
+    assert not grounded(spec, _Ex("INV-2026000", 0.9, "INV-2026000"), PDF_TEXT)
+
+
+def test_repair_a_dropped_digit_only_when_unambiguous():
+    assert repair_from_text("INV-2026000", PDF_TEXT) == "INV-20260000"
+    assert repair_from_text("XYZ-99", PDF_TEXT) is None  # nothing close
+    two = "INV-20260001 and INV-20260002"
+    assert repair_from_text("INV-2026000", two) is None  # two equally close: do not guess

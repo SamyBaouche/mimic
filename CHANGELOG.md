@@ -9,6 +9,16 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
   ("light") otherwise; `MIMIC_PROFILE=auto|standard|light`.
 - `mimic doctor` shows the hardware and the profile it chose, warns when models are too large
   for the machine, and `mimic doctor --pull` downloads the missing models.
+- Document reading: labels printed before identifiers ("No.", "Ref #", "Facture n°") are
+  removed; an identifier misread by a digit is repaired from the PDF's own text when exactly one
+  printed token matches. Measured on the 50 demo invoices: 7B models 99.2% of fields right
+  (96% of documents), 3B models 98.4% (92%, up from 6%), every error flagged in both cases.
+
+### Fixed
+- An identifier read with a missing digit passed the PDF text check because it was part of a
+  longer printed number; the check now needs the whole word.
+- `mimic doctor` says when VISION_MODEL / PLANNER_MODEL in .env override the chosen profile.
+- `mimic extract eval` warns clearly when dropdown choices cannot be read from the app.
 
 ## [0.3.0] - 2026-11-20
 

@@ -96,6 +96,21 @@ def check_hardware() -> Check:
     advised, why = recommend(hw)
     used = f"{s.profile_used} profile ({s.profile_reason})"
     detail = f"{hw.describe()} -> {used}"
+    chosen = PROFILES.get(s.profile_used)
+    if chosen:
+        overridden = [
+            f"{key.upper()}={getattr(s, key)}"
+            for key in ("vision_model", "planner_model")
+            if getattr(s, key) != chosen[key]
+        ]
+        if overridden:
+            return Check(
+                "Hardware",
+                False,
+                f"{detail}, but {' and '.join(overridden)} (.env or environment) override it",
+                "remove or comment out those lines in .env to use the profile's models",
+                required=False,
+            )
     heavy = "7b" in s.vision_model or "7b" in s.planner_model
     if advised == "light" and heavy:
         return Check(

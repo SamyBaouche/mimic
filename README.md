@@ -49,7 +49,8 @@ repairs itself when the interface changes, and asks you before it acts.**
 | **Real app it was not built for** (stock Django admin, 30 rows from Excel) | — | **30/30** saved correctly, **0.44 s** per row |
 | After a UI redesign | **0%** | **100%** |
 | Cost of a repair | — | **8.4 s** with vision → **7.7 ms** with the fine-tuned matcher |
-| Reading invoice PDFs (3 layouts) | 76% of fields right | **96%** right, **100%** of errors flagged |
+| Reading invoice PDFs (50 docs, 3 layouts), 7B models | 76% of fields right | **99.2%** of fields right, **100%** of errors flagged |
+| Same with the light 3B models (laptops without a GPU) | 6% of documents right | **98.4%** of fields right, **100%** of errors flagged |
 | Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
 | Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
 
