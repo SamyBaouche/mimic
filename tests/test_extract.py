@@ -312,3 +312,70 @@ def test_repair_a_dropped_digit_only_when_unambiguous():
     assert repair_from_text("XYZ-99", PDF_TEXT) is None  # nothing close
     two = "INV-20260001 and INV-20260002"
     assert repair_from_text("INV-2026000", two) is None  # two equally close: do not guess
+
+
+# ---------------------------------------------------------------- scans: a second reading
+
+
+class TwoLooks:
+    """First and second reading of a scan, as two different calls to the vision model."""
+
+    def __init__(self, first, second):
+        self.answers = [first, second]
+        self.calls = []
+
+    def chat_json(self, model, system, user, schema, images=None):
+        self.calls.append(user)
+        return self.answers[len(self.calls) - 1]
+
+
+def _scan(tmp_path):
+    from PIL import Image
+
+    path = tmp_path / "receipt.jpg"
+    Image.new("RGB", (300, 600), "white").save(path)
+    return path
+
+
+SCAN_SPECS = [
+    _Spec("vendor", "company name", "text"),
+    _Spec("total", "total paid", "number"),
+]
+
+
+def test_scans_are_read_twice_and_disagreement_is_flagged(tmp_path):
+    first = {
+        "vendor": {"value": "OLD ASIA", "confidence": 0.95},
+        "total": {"value": "RM96.20", "confidence": 0.9},
+    }
+    second = {
+        "vendor": {"value": "CHEF LEE SDN BHD", "confidence": 0.8},
+        "total": {"value": "96.20", "confidence": 0.9},
+    }
+    vlm = TwoLooks(first, second)
+    ex = DocumentExtractor(vlm, "qwen", double_check_scans=True).extract(
+        _scan(tmp_path), SCAN_SPECS
+    )
+    assert len(vlm.calls) == 2 and "again from scratch" in vlm.calls[1]
+    assert ex.uncertain() == ["vendor"]  # the names differ; the totals agree
+    assert "two readings disagree" in ex.fields["vendor"].note
+
+
+def test_agreeing_readings_are_not_flagged_and_pdfs_are_read_once(tmp_path, docs, skill):
+    same = {
+        "vendor": {"value": "99 SPEED MART S/B", "confidence": 0.9},
+        "total": {"value": "11.50", "confidence": 0.9},
+    }
+    vlm = TwoLooks(same, {**same, "vendor": {"value": "99 SPEED MART S/B.", "confidence": 0.9}})
+    ex = DocumentExtractor(vlm, "qwen", double_check_scans=True).extract(
+        _scan(tmp_path), SCAN_SPECS
+    )
+    assert ex.uncertain() == []
+    once = TwoLooks(same, same)
+    DocumentExtractor(once, "qwen", double_check_scans=False).extract(_scan(tmp_path), SCAN_SPECS)
+    assert len(once.calls) == 1
+    pdf = FakeVLM({})
+    DocumentExtractor(pdf, "qwen", double_check_scans=True).extract(
+        docs / "INV-20260001.pdf", field_specs(skill, {"category": CATEGORIES})
+    )
+    assert len(pdf.calls) == 1  # a digital PDF is checked against its own text instead

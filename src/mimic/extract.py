@@ -15,6 +15,7 @@ import argparse
 import io
 import json
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -152,33 +153,58 @@ def schema_for(specs: list[FieldSpec]) -> dict:
 
 _DATE_FORMATS = [
     "%Y-%m-%d",
-    "%d/%m/%Y",
-    "%m/%d/%Y",
+    "%Y/%m/%d",
+    "%Y.%m.%d",
+    "%Y%m%d",  # 20180304, printed by some tills
+    "%d%m%Y",  # 25032018
+    "%d/%b/%Y",  # 02/JAN/2017
+    "%d/%b/%y",
     "%B %d, %Y",
     "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
     "%d %B %Y",
     "%d %b %Y",
-    "%Y/%m/%d",
-    "%d-%m-%Y",
-    "%B %d %Y",
+    "%d-%b-%Y",
+    "%d %B %y",
+    "%d %b %y",  # 28 MAR 18
+    "%d-%b-%y",
+    "%b %d, %y",
 ]
+# 22/02/2026, 22-02-26, 22.02.2026: day and month in either order, 2- or 4-digit year
+_NUMERIC_DATE = re.compile(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4}|\d{2})$")
+_MONTHS_FR = {
+    "janv": "Jan", "janvier": "Jan", "févr": "Feb", "fevr": "Feb", "février": "Feb",
+    "fevrier": "Feb", "mars": "Mar", "avr": "Apr", "avril": "Apr", "mai": "May", "juin": "Jun",
+    "juil": "Jul", "juillet": "Jul", "août": "Aug", "aout": "Aug", "sept": "Sep",
+    "septembre": "Sep", "oct": "Oct", "octobre": "Oct", "nov": "Nov", "novembre": "Nov",
+    "déc": "Dec", "dec": "Dec", "décembre": "Dec", "decembre": "Dec",
+}  # fmt: skip
 
 
-_NUMERIC_DATE = re.compile(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$")
+def _year(text: str) -> int:
+    year = int(text)
+    return year + 2000 if year < 100 else year  # receipts and invoices: this century
 
 
 def date_is_ambiguous(text: str) -> bool:
     """'04/12/2026' could be April 12 or December 4: a human should confirm."""
-    m = _NUMERIC_DATE.match(text.strip())
+    m = _NUMERIC_DATE.match(_drop_time(text))
     return bool(m) and int(m[1]) <= 12 and int(m[2]) <= 12 and m[1] != m[2]
+
+
+def _drop_time(text: str) -> str:
+    text = text.strip().strip("()[]").strip()
+    text = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?m\.?)?$", "", text.strip(), flags=re.I)
+    return re.sub(r"\s+", " ", text)
 
 
 def normalize_date(text: str, day_first: bool = True) -> str | None:
     """Day-first by default for numeric dates (Canada, Europe); ambiguity is flagged apart."""
-    text = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", text.strip())  # drop a trailing time
+    text = _drop_time(text)
     m = _NUMERIC_DATE.match(text)
     if m:
-        a, b, year = int(m[1]), int(m[2]), int(m[3])
+        a, b, year = int(m[1]), int(m[2]), _year(m[3])
         if a > 12:  # 22/02/2026: only day-first makes sense
             day, month = a, b
         elif b > 12:  # 02/22/2026: only month-first makes sense
@@ -189,11 +215,13 @@ def normalize_date(text: str, day_first: bool = True) -> str | None:
             return datetime(year, month, day).date().isoformat()
         except ValueError:
             return None
-    for fmt in _DATE_FORMATS:
-        try:
-            return datetime.strptime(text, fmt).date().isoformat()
-        except ValueError:
-            continue
+    english = " ".join(_MONTHS_FR.get(w.lower().rstrip("."), w) for w in text.split())
+    for candidate in dict.fromkeys([text, english, english.title()]):
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(candidate, fmt).date().isoformat()
+            except ValueError:
+                continue
     return None
 
 
@@ -335,10 +363,57 @@ class Extraction:
         ]
 
 
+def _parse(answer: dict, spec: FieldSpec) -> Extracted:
+    item = answer.get(spec.parameter) or {}
+    raw = item.get("value") if isinstance(item, dict) else item
+    try:
+        conf = float(item.get("confidence", 0.5)) if isinstance(item, dict) else 0.5
+    except (TypeError, ValueError):
+        conf = 0.5
+    return normalize(spec, raw, max(0.0, min(conf, 1.0)))
+
+
+def agree(spec: FieldSpec, a: Extracted, b: Extracted) -> bool:
+    """Do two independent readings give the same value?"""
+    import difflib
+
+    if a.value is None or b.value is None:
+        return a.value == b.value
+    if spec.kind == "text":
+        x = re.sub(r"[^a-z0-9]", "", str(a.value).lower())
+        y = re.sub(r"[^a-z0-9]", "", str(b.value).lower())
+        return difflib.SequenceMatcher(None, x, y).ratio() >= 0.9
+    return _same(a.value, b.value)
+
+
+def _rescaled(pages: list[bytes], max_side: int) -> list[bytes]:
+    out = []
+    for png in pages:
+        img = Image.open(io.BytesIO(png))
+        out.append(_png(img, max_side))
+    return out
+
+
+SECOND_LOOK = (
+    "Read this document again from scratch, ignoring any earlier answer. For each field, "
+    "first find the exact line where it is printed, then copy it character by character. "
+    "If you are not sure, say so with a low confidence.\n{fields}"
+)
+
+
 class DocumentExtractor:
-    def __init__(self, client, model: str):
+    """Reads fields with a vision model, then checks them against the document itself:
+    its text layer when there is one (digital PDFs), else a second independent reading
+    (scans and photos), and flags whatever does not hold up."""
+
+    def __init__(self, client, model: str, double_check_scans: bool | None = None):
         self.client = client
         self.model = model
+        if double_check_scans is None:
+            from mimic.config import get_settings
+
+            double_check_scans = get_settings().double_check_scans
+        self.double_check_scans = double_check_scans
 
     def extract(self, path: Path, specs: list[FieldSpec]) -> Extraction:
         t0 = time.perf_counter()
@@ -354,15 +429,29 @@ class DocumentExtractor:
             "Give each field a confidence from 0 to 1."
         )
         answer = self.client.chat_json(self.model, SYSTEM, prompt, schema_for(specs), images=pages)
+        second = None
+        if text is None and self.double_check_scans:
+            # No text layer to check against: a second look, worded differently and on a
+            # slightly different image, must agree with the first.
+            second = self.client.chat_json(
+                self.model,
+                SYSTEM,
+                SECOND_LOOK.format(fields=fields),
+                schema_for(specs),
+                images=_rescaled(pages, 1200),
+            )
         out = {}
         for s in specs:
-            item = answer.get(s.parameter) or {}
-            raw = item.get("value") if isinstance(item, dict) else item
-            try:
-                conf = float(item.get("confidence", 0.5)) if isinstance(item, dict) else 0.5
-            except (TypeError, ValueError):
-                conf = 0.5
-            got = normalize(s, raw, max(0.0, min(conf, 1.0)))
+            got = _parse(answer, s)
+            if second is not None:
+                other = _parse(second, s)
+                if not agree(s, got, other):
+                    got = Extracted(
+                        got.value,
+                        min(got.confidence, 0.3),
+                        got.raw,
+                        f"two readings disagree: {got.value!r} / {other.value!r}",
+                    )
             if text is not None and s.kind == "text" and not grounded(s, got, text):
                 fixed = repair_from_text(str(got.value), text)
                 if fixed is not None:
@@ -444,9 +533,32 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("read", help="Extract one document and print the values")
     r.add_argument("document", type=Path)
     r.add_argument("--skill", default="enter_invoice")
+    rc = sub.add_parser("receipts", help="Benchmark on real scanned receipts (ICDAR 2019 SROIE)")
+    rc.add_argument("--n", type=int, default=50, help="How many receipts (out of 626)")
+    rc.add_argument("--cache", type=Path, default=None, help="Where to keep the downloads")
     args = parser.parse_args(argv)
 
     settings = get_settings()
+    if args.cmd == "receipts":
+        from mimic import receipts
+
+        cache = args.cache or settings.mimic_home / "datasets" / "sroie"
+        print(f"Downloading {args.n} real receipts into {cache} (first time only)...")
+        try:
+            items = receipts.fetch_sroie(cache, args.n)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise SystemExit(f"Could not download the receipts (git needed): {exc}") from None
+        print(f"Reading {len(items)} receipts with {settings.vision_model}...")
+        report, mistakes = receipts.run(
+            DocumentExtractor(OllamaClient(), settings.vision_model), items
+        )
+        report["model"] = settings.vision_model
+        print(json.dumps(report, indent=2))
+        Path("reports").mkdir(exist_ok=True)
+        Path("reports/receipts_benchmark.json").write_text(json.dumps(report, indent=2))
+        out = receipts.write_mistakes(Path("reports/receipts_mistakes.csv"), mistakes)
+        print(f"Every mistake, for analysis: {out}")
+        return
     skill = SkillStore().get(args.skill)
     if skill is None:
         raise SystemExit(f"Unknown skill '{args.skill}'.")

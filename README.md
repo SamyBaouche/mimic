@@ -51,6 +51,7 @@ repairs itself when the interface changes, and asks you before it acts.**
 | Cost of a repair | — | **8.4 s** with vision → **7.7 ms** with the fine-tuned matcher |
 | Reading invoice PDFs (50 docs, 3 layouts), 7B models | 76% of fields right | **99.2%** of fields right, **100%** of errors flagged |
 | Same with the light 3B models (laptops without a GPU) | 6% of documents right | **98.4%** of fields right, **100%** of errors flagged |
+| **Real scanned receipts** (ICDAR 2019 SROIE, 50 receipts, 7B) | 95.3% of fields right | **97.3%** of fields right (store, date, total) |
 | Flaky pages (cookie banners, slow buttons, errors) | 29 failed actions | **7** failed actions (**−76%**) |
 | Speed vs. always fixing the page | 3.1 s / task | **1.3 s** / task (**59% faster**) |
 
@@ -131,6 +132,21 @@ mimic sandbox                                       # also writes 50 invoice PDF
 mimic extract eval                                  # field-level accuracy vs ground truth
 mimic run enter_invoice --docs sandbox/data/documents --limit 5
 ```
+
+### Real receipts, not just generated PDFs
+
+`mimic extract receipts --n 50` downloads real scanned shop receipts (ICDAR 2019 SROIE) and
+scores the store name, the date and the total paid. Faded print, handwriting, no text layer.
+
+- **97.3%** of fields right, 92% of receipts fully right, 8.6 s per receipt (7B models).
+- The 4 remaining mismatches were checked by hand: 2 typos in the dataset's own answers, 1
+  receipt that names both a shop and its owning company, 1 where the dataset expects the total
+  before tax and Mimic read the total paid.
+- Scans have no text layer to check a reading against, so Mimic reads them twice and flags
+  disagreements. This is weaker than on digital PDFs: it sends 20% of fields to review and
+  caught 1 of the 4 mismatches. `DOUBLE_CHECK_SCANS=false` halves the time.
+- Real receipts also showed 163 of 626 dates in formats Mimic could not read (12-01-19,
+  28 MAR 18, 20180304). All 626 now parse.
 
 ### Real apps, not just the sandbox
 
@@ -302,6 +318,7 @@ uv run pytest
 | `mimic workflow check` · `run FILE.yml` | Chain skills across apps for every email / row, with conditions |
 | `mimic serve [--port 8765]` | Live dashboard: watch the agent, approve from the browser |
 | `mimic read FILE` · `mimic extract eval` | Extract one document · measure extraction accuracy |
+| `mimic extract receipts --n 50` | Benchmark on real scanned receipts (ICDAR 2019 SROIE) |
 | `mimic risk collect` · `train` · `evaluate` | Telemetry, XGBoost, A/B test |
 | `mimic matcher train` · `evaluate` · `push` | Fine-tune, measure, publish the Hugging Face element matcher |
 

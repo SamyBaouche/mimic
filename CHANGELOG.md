@@ -5,6 +5,15 @@ All notable changes to Mimic. Versions follow [Semantic Versioning](https://semv
 ## [Unreleased]
 
 ### Added
+- `mimic extract receipts --n N`: benchmark on real scanned receipts (ICDAR 2019 SROIE,
+  downloaded at run time), scoring store name, date and total, with every mistake in a CSV.
+  On 50 receipts with 7B models: 95.3% of fields right before this release, 97.3% after.
+- Scans and photos (no text layer to check against) are read twice, worded differently and at
+  another resolution; fields where the two readings disagree are flagged for review
+  (`DOUBLE_CHECK_SCANS=false` to turn it off).
+- Dates as printed on real receipts: two-digit years (12-01-19), month names in English and
+  French (28 MAR 18, 15 janv. 2026), compact dates (20180304). 626 of 626 SROIE dates now parse,
+  up from 463.
 - `mimic skills edit`: fix a value, remove a step, turn a step into an input, rename inputs,
   change the description, interactively or with flags; every edit is checked, and the previous
   version is backed up. `mimic skills export` / `import` to share a skill or undo an edit.

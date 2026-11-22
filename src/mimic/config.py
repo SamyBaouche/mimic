@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     vision_model: str = ""
     planner_model: str = ""
     embed_model: str = "nomic-embed-text"
+    # Scans and photos have no text to check a reading against: read them twice, flag disagreement
+    double_check_scans: bool = True  # env: DOUBLE_CHECK_SCANS
     profile_used: str = ""  # filled in below: the profile actually applied, and why
     profile_reason: str = ""
     sandbox_url: str = "http://localhost:8001"
